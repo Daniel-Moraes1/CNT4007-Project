@@ -1,4 +1,6 @@
 package src;
+import src.P2PFile;
+
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
@@ -8,6 +10,7 @@ import java.net.*;
 import java.io.*;
 import java.util.HashSet;
 import java.util.Random;
+
 
 public class Peer {
 
@@ -27,6 +30,7 @@ public class Peer {
     private volatile ServerSocket welcomeSocket;
     private volatile boolean finished;
     private volatile boolean listening;
+    private volatile P2PFile p2pFile;
 
     public class Neighbor {
         public volatile int id;
@@ -112,7 +116,7 @@ public class Peer {
         if (hasFile_) {
             bitfield.set(0, bitfield.size(), true);
         }
-
+        this.p2pFile = new P2PFile(fileName_, pieceSize);
     }
 
     private void listenForNewNeighbor() throws Exception {
@@ -338,7 +342,7 @@ public class Peer {
         OutputStream out = neighbor.connection.getOutputStream();
         if (!this.finished) {
             if (!neighbor.chokedByNeighbor) {
-                if (neighbor.interestedInNeighbor) {
+                if (neighbor.interestedInNeighbor ) {
                     if (!neighbor.waitingForPiece) {
                         //If we are not choked by the neighbor, neighbor has pieces we do not,
                         // and we do not have an outstanding piece request to neighbor, find a piece to request
