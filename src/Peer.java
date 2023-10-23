@@ -92,7 +92,7 @@ public class Peer {
 
     public Peer(int id_, int maxConnections_, int unchokingInterval_,
                 int optimisticUnchokingInterval_, String fileName_,
-                int fileSize_, int pieceSize_, int welcomePort_, boolean hasFile_, Array) throws IOException {
+                int fileSize_, int pieceSize_, int welcomePort_, boolean hasFile_) throws IOException {
         this.id = id_;
         this.maxConnections = maxConnections_;
         this.unchokingInterval = unchokingInterval_;
