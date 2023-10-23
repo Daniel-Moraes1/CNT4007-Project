@@ -6,61 +6,73 @@ import java.util.BitSet;
 import java.util.List;
 import java.net.*;
 import java.io.*;
-
-
+import java.util.HashSet;
+import java.util.Random;
 
 public class Peer {
 
-    private int id;
-    private BitSet bitfield;
-    private BitSet requested;
-    private List <Neighbor> neighbors;
-    private int countFinishedNeighbors;
-    private int maxConnections;
-    private int unchokingInterval;
-    private int optimisticUnchokingInterval;
-    private String fileName;
-    private int fileSize;
-    private int pieceSize;
-    private int totalPieces;
-    private ServerSocket welcomeSocket;
-    private boolean finished;
-    private boolean listening;
+    private volatile int id;
+    private volatile BitSet bitfield;
+    private volatile BitSet requested;
+    private volatile List <Neighbor> neighbors;
+    private volatile int countFinishedNeighbors;
+    private volatile int numConnections;
+    private volatile int maxConnections;
+    private volatile int unchokingInterval;
+    private volatile int optimisticUnchokingInterval;
+    private volatile String fileName;
+    private volatile int fileSize;
+    private volatile int pieceSize;
+    private volatile int totalPieces;
+    private volatile ServerSocket welcomeSocket;
+    private volatile boolean finished;
+    private volatile boolean listening;
 
     public class Neighbor {
-        public int id;
-        public String address;
-        public int packetCount;
-        public BitSet bitfield;
-        public boolean choked;
-        public boolean finished;
-        Socket connection;
-        Status readStatus; // Interested / Not Interested in a neighbor
-        Status writeStatus; // Is a neighbor choked or unchoked by us
+        public volatile int id;
+        public volatile String address;
+        public volatile int packetCount;
+        public volatile BitSet bitfield;
+        public volatile boolean choked;
+        public volatile boolean finished;
+        public volatile Socket connection;
+        public volatile boolean  interestedInPeer; // Is neighbor interested in Peer's pieces
+        public volatile boolean  interestedInNeighbor; // Is Peer interested in neighbor's pieces
+        public volatile boolean chokedByPeer; // Is neighbor choked by Peer
+        public volatile boolean chokedByNeighbor; // Is Peer choked by neighbor
+        public volatile HashSet<Integer> piecesForPeer; // Track pieces neighbor has that peer does not have
+        public volatile boolean waitingForPiece;
+        public volatile int piecesInInterval;
 
 
         public Neighbor(int id_, String address_, int welcomeSocket) throws IOException, ClassNotFoundException {
             this.id = id_;
             this.address = address_;
             this.bitfield = new BitSet(totalPieces);
-            this.choked = true;
             this.finished = false;
             this.connection = fetchPort(address_, welcomeSocket);
-            this.readStatus = Status.CHOKE;
-            this.writeStatus = Status.CHOKE;
+            this.interestedInPeer = false;
+            this.interestedInNeighbor = false;
+            this.chokedByPeer = true;
+            this.chokedByNeighbor = true;
             this.packetCount = 0;
-            this.finished = false;
+            this.piecesForPeer = new HashSet<Integer>();
+            this.waitingForPiece = false;
+            this.piecesInInterval = 0;
         }
         public Neighbor(int id, Socket connection_) throws IOException, ClassNotFoundException {
             this.id = id;
             this.bitfield = new BitSet(totalPieces);
-            this.choked = true;
             this.finished = false;
             this.connection = connection_;
-            this.readStatus = Status.CHOKE;
-            this.writeStatus = Status.CHOKE;
+            this.interestedInPeer = false;
+            this.interestedInNeighbor = false;
+            this.chokedByPeer = true;
+            this.chokedByNeighbor = true;
             this.packetCount = 0;
-            this.finished = false;
+            this.piecesForPeer = new HashSet<Integer>();
+            this.waitingForPiece = false;
+            this.piecesInInterval = 0;
         }
 
         private Socket fetchPort(String neighborName, int welcomeSocket) throws IOException, ClassNotFoundException {
@@ -68,6 +80,11 @@ public class Peer {
             ObjectInputStream in = new ObjectInputStream(tempSocket.getInputStream());
             int portNumber = in.readInt();
             tempSocket.close();
+            Socket newSocket = new Socket(neighborName, portNumber);
+            if (numConnections < maxConnections) {
+                this.chokedByPeer = false;
+                numConnections++;
+            }
             return new Socket(neighborName,  portNumber);
         }
 
@@ -75,7 +92,7 @@ public class Peer {
 
     public Peer(int id_, int maxConnections_, int unchokingInterval_,
                 int optimisticUnchokingInterval_, String fileName_,
-                int fileSize_, int pieceSize_, int welcomePort_, boolean hasFile_) throws IOException {
+                int fileSize_, int pieceSize_, int welcomePort_, boolean hasFile_, Array) throws IOException {
         this.id = id_;
         this.maxConnections = maxConnections_;
         this.unchokingInterval = unchokingInterval_;
@@ -149,10 +166,14 @@ public class Peer {
 
         Neighbor n = new Neighbor(id, connection);
         neighbors.add(n);
+        if (numConnections < maxConnections) {
+            n.chokedByPeer = false;
+            numConnections++;
+        }
 
         Thread readerThread = new Thread(() -> {
             try {
-                this.readFromNeighbor(n);
+                this.responder(n);
             } catch (Exception e) {
                 e.printStackTrace();
             }
@@ -160,7 +181,11 @@ public class Peer {
         readerThread.start();
         readerThread.join();
         Thread writerThread = new Thread(() -> {
-            this.writeToNeighbor(n);
+            try {
+                this.initiator(n);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
         });
         writerThread.start();
         writerThread.join();
@@ -183,109 +208,195 @@ public class Peer {
     }
 
     // Thread for reading from neighbor connection
-    public void readFromNeighbor(Neighbor neighbor) throws Exception {
+    public void responder(Neighbor neighbor) throws Exception {
         // For each message, get message type
         InputStream in = neighbor.connection.getInputStream();
         OutputStream out = neighbor.connection.getOutputStream();
-        byte[] lengthBytes = in.readNBytes(4);
+        while(listening) {
+            byte[] lengthBytes = in.readNBytes(4); // Wait for message to come in
+            int messageLength = fourBytesToInt(lengthBytes);
 
-        int messageLength = fourBytesToInt(lengthBytes);
+            int type = in.read();
+            switch(type) {
+                // Choke
+                // Stop receiving messages from neighbor
+                case 0:
+                    neighbor.chokedByNeighbor = true;
+                    break;
 
-        int type = in.read();
-        switch(type) {
-            // Choke
-            // Stop receiving messages from neighbor
-            case 0:
-                neighbor.readStatus = Status.CHOKE;
-                break;
+                // Unchoke
+                // Begin receiving messages from neighbor
+                case 1:
+                    neighbor.chokedByNeighbor = false;
+                    break;
 
-            // Unchoke
-            // Begin receiving messages from neighbor
-            case 1:
-                neighbor.readStatus = Status.UNCHOKE;
-                break;
+                //Interested
+                case 2:
+                    neighbor.interestedInPeer = true;
+                    break;
 
-            //Interested
-            case 2:
-                neighbor.writeStatus = Status.INTERESTED;
+                // Not Interested
+                case 3:
+                    neighbor.interestedInPeer = false;
+                    if (!neighbor.finished) {
+                        boolean fin = true;
+                        for (int i=0; i<totalPieces; i++) {
+                            if (!neighbor.bitfield.get(i)) {
+                                fin = false;
+                            }
+                            neighbor.bitfield.set(i, neighbor.bitfield.get(i) || this.bitfield.get(i));
+                        }
+                        neighbor.finished = fin;
+                        countFinishedNeighbors++;
+                        checkDone();
+                    }
+                    break;
 
-                break;
+                // Have
+                case 4:
+                    byte[] byteIndex = in.readNBytes(4);
 
-            // Not Interested
-            case 3:
-                neighbor.writeStatus = Status.NOT_INTERESTED;
-                break;
+                    int index = fourBytesToInt(byteIndex);
+                    if (!this.bitfield.get(index)) {
+                        neighbor.piecesForPeer.add(index);
+                        sendMessage(MessageType.INTERESTED, out, null);
+                    }
+                    break;
 
-            // Have
-            case 4:
-                byte[] byteIndex = in.readNBytes(4);
+                // Bitfield
+                case 5:
+                    byte[] bitfieldBytes = in.readNBytes(messageLength-1);
+                    neighbor.bitfield = BitSet.valueOf(bitfieldBytes);
+                    for (int i=0; i<neighbor.bitfield.size(); i++) {
+                        if (neighbor.bitfield.get(i) && !this.bitfield.get(i)) {
+                            neighbor.piecesForPeer.add(i);
+                        }
+                    }
+                    checkInterestInNeighbor(neighbor);
 
-                int index = fourBytesToInt(byteIndex);
-                if (!this.bitfield.get(index)) {
-                    sendMessage(Status.INTERESTED, out, null);
-                }
-                else {
-                    byte[] empty;
-                    sendMessage(Status.NOT_INTERESTED, out, null);
-                }
-                break;
+                    if (neighbor.interestedInNeighbor) {
+                        sendMessage(MessageType.INTERESTED, out, null); // Send interested in neighbor
+                    }
+                    else {
+                        sendMessage(MessageType.NOT_INTERESTED, out, null); // Send not interested in neighbor
+                    }
+                    break;
 
-            // Bitfield
-            // Upon receiving
-            case 5:
-                // Probably need locks here
-                byte[] bitfieldBytes = in.readNBytes(messageLength-1);
-                neighbor.bitfield = BitSet.valueOf(bitfieldBytes);
-                neighbor.readStatus = Status.NOT_INTERESTED;
-                for (int i=0; i<bitfield.size(); i++) {
-                    // Neighbor has pieces we don't have and have not requested
-                    if (neighbor.bitfield.get(i) && !this.bitfield.get(i) && !this.requested.get(i)) {
-                        neighbor.readStatus = Status.INTERESTED;
+                // Request
+                case 6:
+                    byte[] requestIndexBytes = in.readNBytes(4);
+                    int requestedIndex = fourBytesToInt(requestIndexBytes);
+                    if (!neighbor.choked) {
+                        // TODO If the neighbor is not choked, send the piece
+                        //sendMessage(MessageType.PIECE, out, NEEDED_PIECE);
+                        neighbor.piecesInInterval++;
+                    }
+                    else {
+                        // We can send an empty piece for the request index if the neighbor has been choked
+                        // This will let then know to request the piece from another neighbor
+                        sendMessage(MessageType.PIECE, out, requestIndexBytes);
+                        neighbor.bitfield.set(requestedIndex, true);
+                    }
+                    break;
+
+                // Piece
+                case 7:
+                    // The first four bytes of a piece payload is the index
+                    byte[] pieceIndexBytes = in.readNBytes(4);
+                    int pieceIndex = fourBytesToInt(pieceIndexBytes);
+                    if (messageLength == 9) {
+                        // We were choked by the neighbor and the piece was not sent over
+                        requested.set(pieceIndex, false);
+                    }
+                    else {
+                        byte[] pieceData = in.readNBytes(messageLength-1-4);
+                        // TODO SAVE PIECE DATA TO FILE
+                        this.bitfield.set(pieceIndex, true);
+
+                        // When we get a piece, inform all neighbors that we have that piece. Re-evaluate interest
+                        for (int i=0; i<neighbors.size(); i++) {
+                            sendMessage(MessageType.HAVE, out, pieceIndexBytes);
+
+                            // Upon receiving a new packet, remove packet index for set of packets that neighbors have and peer does not
+                            // If set of missing packets that a neighbor has becomes 0, send NOT_INTERESTED
+                            if (neighbors.get(i).piecesForPeer.contains(pieceIndex)) {
+                                neighbors.get(i).piecesForPeer.remove(pieceIndex);
+                                if (!checkInterestInNeighbor(neighbors.get(i))) {
+                                    sendMessage(MessageType.NOT_INTERESTED, out, null);
+                                }
+                            }
+                        }
+                        neighbor.waitingForPiece = false;
+                    }
+                    break;
+            }
+        }
+    }
+
+    // Thread for starting message sends to neighbors (piece requests, chokes/unchokes)
+    public void initiator(Neighbor neighbor) throws IOException {
+        OutputStream out = neighbor.connection.getOutputStream();
+        if (!this.finished) {
+            if (!neighbor.chokedByNeighbor) {
+                if (neighbor.interestedInNeighbor) {
+                    if (!neighbor.waitingForPiece) {
+                        //If we are not choked by the neighbor, neighbor has pieces we do not,
+                        // and we do not have an outstanding piece request to neighbor, find a piece to request
+                        int random = new Random().nextInt() % neighbor.piecesForPeer.size();
+                        int count = 0;
+                        int pieceNumber = 0;
+                        for (int iterator : neighbor.piecesForPeer) {
+                            if (count == random) {
+                                pieceNumber = iterator;
+                                break;
+                            }
+                            count++;
+                        }
+                        byte[] pieceNumberBytes = intToFourBytes(pieceNumber);
+                        sendMessage(MessageType.REQUEST, out, pieceNumberBytes);
+                        neighbor.waitingForPiece = true;
                     }
                 }
-                sendMessage(neighbor.readStatus, out, null); // State whether interested or not in neighbor
-                break;
-
-            // Request
-            case 6:
-                byte[] requestIndexBytes = in.readNBytes(4);
-                int requestedIndex = fourBytesToInt(requestIndexBytes);
-                if (!neighbor.choked) {
-                    // If the neighbor is not choked, send the piece
-                    sendMessage(Status.PIECE, out, NEEDED PIECE);
-                }
-                else {
-                    // We can send an empty piece if the neighbor has been choked
-                    // This will let then know to request the piece from another neighbor
-                    sendMessage(Status.PIECE, out, null);
-                }
-                break;
-
-            // Piece
-            case 7:
-                byte[] pieceBytes = in.readNBytes(messageLength-1);
-                if (pieceBytes == null) {
-                    // We were choked by the neighbor and the piece was not sent over
-                    requestedIndex.set
-
-                }
-                break;
+            }
         }
-
-
     }
 
-    // Thread for writing to neighbor connection
-    public void writeToNeighbor(Neighbor neighbor) {
-        if (!this.finished) {
-            if (neighbor.bitfield - this.bitfield)
-
+    private void sendMessage(MessageType messageType, OutputStream out, byte[] message) throws IOException {
+        int messageLength = message.length + 1;
+        byte[] messageLengthBytes = intToFourBytes(messageLength);
+        int type = -1;
+        switch(messageType) {
+            case CHOKE:
+                type = 0;
+                break;
+            case UNCHOKE:
+                type = 1;
+                break;
+            case INTERESTED:
+                type = 2;
+                break;
+            case NOT_INTERESTED:
+                type = 3;
+                break;
+            case HAVE:
+                type = 4;
+                break;
+            case BITFIELD:
+                type = 5;
+                break;
+            case REQUEST:
+                type = 6;
+                break;
+            case PIECE:
+                type = 7;
+                break;
         }
-
-    }
-
-    private void sendMessage(Status status, OutputStream out, byte[] message) {
-
+        byte[] typeByte = intToFourBytes(type);
+        byte[] fullMessage = new byte[4+1+message.length];
+        System.arraycopy(messageLengthBytes, 0, fullMessage, 0, 4);
+        System.arraycopy(typeByte, 0, fullMessage, 4, 1);
+        System.arraycopy(message, 0, fullMessage, 5, message.length);
+        out.write(fullMessage);
     }
 
     public int fourBytesToInt(byte[] bytes) {
@@ -296,7 +407,52 @@ public class Peer {
         return sum;
     }
 
+    public byte[] intToFourBytes(int num) {
+        return new byte[]{
+                (byte) (num >> 24),
+                (byte) (num >> 16),
+                (byte) (num >> 8),
+                (byte) num
+        };
+    }
 
+
+    private boolean checkInterestInNeighbor(Neighbor neighbor) {
+        neighbor.interestedInNeighbor = !neighbor.piecesForPeer.isEmpty();
+        return neighbor.interestedInNeighbor;
+    }
+
+    // If all neighbors and self is done, end all connections with Peer
+    private void checkDone() {
+        if (this.countFinishedNeighbors == neighbors.size() && this.finished) {
+            listening = false;
+        }
+    }
+
+
+    public static void main(String[] args) {
+        int index;
+        try {
+            index = Integer.valueOf(args[0]);
+        } catch (Exception e) {
+            System.out.println("Invalid input ID");
+        }
+        try {
+            File common = new File("./Common.cfg");
+        } catch (Exception e) {
+            System.out.println("Failed to open Common.cfg");
+        }
+        try {
+            File peerInfo = new File("./PeerInfo.cfg");
+        } catch (Exception e) {
+            System.out.println("Failed to open PeerInfo.cfg");
+        }
+        // TODO
+        // Read config info from common.
+        // Store all neighbor information up to the peer running this program. Will need to pass this into peer construction
+        //Peer peer = new Peer();
+
+    }
 }
 
 
