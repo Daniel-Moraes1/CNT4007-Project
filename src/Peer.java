@@ -10,7 +10,7 @@ import java.io.*;
 import java.util.HashSet;
 import java.util.Random;
 import java.util.Vector;
-import java.time;
+import java.lang.System;
 import java.nio.file.Files;
 
 
@@ -23,8 +23,8 @@ public class Peer {
     private volatile int countFinishedNeighbors;
     private volatile int numConnections;
     private volatile int maxConnections;
-    private volatile int unchokingInterval;
-    private volatile int optimisticUnchokingInterval;
+    private volatile int unchokeInterval;
+    private volatile int optimisticUnchokeInterval;
     private volatile String fileName;
     private volatile int fileSize;
     private volatile int pieceSize;
@@ -34,6 +34,8 @@ public class Peer {
     private volatile boolean listening;
     private volatile P2PFile p2pFile;
     private volatile Thread welcomeThread;
+    private volatile long lastUnchoke;
+    private volatile long lastOptimisticUnchoke;
 
     public class Neighbor {
         public volatile int id;
@@ -105,8 +107,8 @@ public class Peer {
                 int fileSize_, int pieceSize_, int welcomePort_, boolean hasFile_, Vector<NeighborInfo> neighborInfo) throws IOException, InterruptedException {
         this.id = id_;
         this.maxConnections = maxConnections_;
-        this.unchokingInterval = unchokingInterval_;
-        this.optimisticUnchokingInterval = optimisticUnchokingInterval_;
+        this.unchokeInterval = unchokingInterval_;
+        this.optimisticUnchokeInterval = optimisticUnchokingInterval_;
         this.fileName = fileName_;
         this.fileSize = fileSize_;
         this.pieceSize = pieceSize_;
@@ -389,9 +391,19 @@ public class Peer {
     }
 
     public void timer() {
+        if (System.nanoTime() >= this.lastUnchoke + this.unchokeInterval) {
+            unchoke();
+            this.lastUnchoke = System.nanoTime();
 
-
+        }
+        if (System.nanoTime() >= this.lastOptimisticUnchoke + this.unchokeInterval) {
+            optimisticUnchoke();
+            this.lastOptimisticUnchoke = System.nanoTime();
+        }
     }
+
+    private void unchoke(){}
+    private void optimisticUnchoke(){}
 
     private void sendMessage(MessageType messageType, OutputStream out, byte[] message) throws IOException {
         int messageLength = message.length + 1;
