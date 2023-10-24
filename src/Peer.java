@@ -453,10 +453,12 @@ public class Peer {
             }
         }
 
+        // If an unchoked neighbor is not reselected to be unchoked
         for (Neighbor n : unchokedNeighbors) {
             if (!toUnchoke.contains(n) && this.optimisticUnchokedNeighbor != n) {
                 this.unchokedNeighbors.remove(n);
                 this.chokedNeighbors.add(n);
+                sendMessage(MessageType.CHOKE, n, null);
             }
         }
 
@@ -496,7 +498,7 @@ public class Peer {
             chokedNeighbors.remove(interested.get(random));
         }
         else if (optimisticUnchokedNeighbor != null) {
-            // not sure if we need to log this
+            // not sure if we need to log if same optimistically unchoked neighbor is reselected
             optimisticUnchokedNeighbor = optimisticUnchokedNeighbor;
         }
     }
@@ -633,7 +635,7 @@ public class Peer {
         }
 
         if(index == -1) throw new Exception("invalid ID");
-         Peer peer = new Peer(peerNeighborInfoFromConfig.get(index).id,
+        Peer peer = new Peer(peerNeighborInfoFromConfig.get(index).id,
                 numPreferredNeighbors,unChokingInterval,idealChokingInterval,fileName,
                 fileSize,pieceSize,peerNeighborInfoFromConfig.get(index).port,
                 peerNeighborInfoFromConfig.get(index).hasFile,peerNeighborInfoFromConfig);
