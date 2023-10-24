@@ -472,6 +472,11 @@ public class Peer {
             }
         }
 
+        // Reset pieces downloaded in interval for all neighbors
+        for (int i=0; i<neighbors.size(); i++) {
+            neighbors.get(i).piecesInInterval = 0;
+        }
+
     }
     private void optimisticUnchoke() {
         Vector<Neighbor> interested = new Vector<Neighbor>();
