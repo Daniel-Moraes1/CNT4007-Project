@@ -45,7 +45,6 @@ public class Peer {
         public volatile int welcomePort;
         public volatile int packetCount;
         public volatile BitSet bitfield;
-        public volatile boolean choked;
         public volatile boolean finished;
         public volatile Socket connection;
         public volatile boolean  interestedInPeer; // Is neighbor interested in Peer's pieces
@@ -324,7 +323,7 @@ public class Peer {
                 case 6:
                     byte[] requestIndexBytes = in.readNBytes(4);
                     int requestedIndex = fourBytesToInt(requestIndexBytes);
-                    if (!neighbor.choked) {
+                    if (unchokedNeighbors.contains(neighbor)) {
                         sendMessage(MessageType.PIECE, neighbor, p2pFile.getPiece(requestedIndex));
                         neighbor.piecesInInterval++;
                     }
