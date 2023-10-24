@@ -7,12 +7,14 @@ import java.util.Map;
 public class P2PFile {
 
     private final String filePath;
-    private final int pieceSize;
+    private final long pieceSize;
+    private final long fileSize;
     private final Map<Integer, byte[]> pieces;
     private final BitSet pieceAvailability;
 
-    public P2PFile(String filePath, int pieceSize) throws IOException {
+    public P2PFile(String filePath, long fileSize, long pieceSize) throws IOException {
         this.filePath = filePath;
+        this.fileSize = fileSize;
         this.pieceSize = pieceSize;
         this.pieces = new HashMap<>();
         this.pieceAvailability = new BitSet();
@@ -38,12 +40,12 @@ public class P2PFile {
         }
         try (FileInputStream fileInputStream = new FileInputStream(filePath)) {
             int index = 0;
-            byte[] temp = new byte[pieceSize];
+            byte[] temp = new byte[(int)pieceSize];
 
             while (fileInputStream.read(temp) != -1) {
                 pieces.put(index, temp);
                 pieceAvailability.set(index);
-                temp = new byte[pieceSize];
+                temp = new byte[(int)pieceSize];
                 index++;
             }
         } catch (IOException e) {
@@ -53,7 +55,7 @@ public class P2PFile {
 
     //writes a piece to the file
     public synchronized void writePiece(int pieceIndex, byte[] pieceData) throws IOException {
-        int offset = pieceIndex * pieceSize;
+        int offset = pieceIndex * (int)pieceSize;
         try (RandomAccessFile file = new RandomAccessFile(filePath, "rw")) {
             file.seek(offset);
             file.write(pieceData);

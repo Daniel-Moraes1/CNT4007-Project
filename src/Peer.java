@@ -1,17 +1,11 @@
 package src;
-import src.P2PFile;
 
-import java.io.ObjectInputStream;
-import java.io.ObjectOutputStream;
-import java.net.Socket;
-import java.util.*;
-import java.net.*;
 import java.io.*;
-import java.util.HashSet;
-import java.util.Random;
-import java.util.Vector;
-import java.time;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.net.SocketTimeoutException;
 import java.nio.file.Files;
+import java.util.*;
 
 
 public class Peer {
@@ -26,8 +20,9 @@ public class Peer {
     private volatile int unchokingInterval;
     private volatile int optimisticUnchokingInterval;
     private volatile String fileName;
-    private volatile int fileSize;
-    private volatile int pieceSize;
+    private volatile long fileSize;
+    private volatile long pieceSize;
+    //private volatile long totalPieces;
     private volatile int totalPieces;
     private volatile ServerSocket welcomeSocket;
     private volatile boolean finished;
@@ -102,7 +97,7 @@ public class Peer {
 
     public Peer(int id_, int maxConnections_, int unchokingInterval_,
                 int optimisticUnchokingInterval_, String fileName_,
-                int fileSize_, int pieceSize_, int welcomePort_, boolean hasFile_, Vector<NeighborInfo> neighborInfo) throws IOException, InterruptedException {
+                long fileSize_, long pieceSize_, int welcomePort_, boolean hasFile_, Vector<NeighborInfo> neighborInfo) throws IOException, InterruptedException, ClassNotFoundException {
         this.id = id_;
         this.maxConnections = maxConnections_;
         this.unchokingInterval = unchokingInterval_;
@@ -110,7 +105,7 @@ public class Peer {
         this.fileName = fileName_;
         this.fileSize = fileSize_;
         this.pieceSize = pieceSize_;
-        this.totalPieces = fileSize_ / pieceSize;
+        this.totalPieces = (int)(fileSize_ / pieceSize);
         if (fileSize_ % pieceSize > 0) {
             this.totalPieces++;
         }
@@ -122,9 +117,9 @@ public class Peer {
         if (hasFile_) {
             bitfield.set(0, bitfield.size(), true);
         }
-        this.p2pFile = new P2PFile(fileName_, pieceSize);
+        this.p2pFile = new P2PFile(fileName_, fileSize, pieceSize);
         for (int i=0; i<neighborInfo.size(); i++) {
-            Neighbor n = new Neighbor(neighborInfo.get(i).id, neighborInfo.get(i).address, neighborInfo.get(i).welcomeSocket);
+            Neighbor n = new Neighbor(neighborInfo.get(i).id, neighborInfo.get(i).name, neighborInfo.get(i).port);
             neighbors.add(n);
         }
         this.welcomeThread = new Thread(() -> {
@@ -462,22 +457,20 @@ public class Peer {
     }
 
 
-    public static void main(String[] args) {
-        int index;
+    public static void main(String[] args) throws Exception {
+        int index = -1;
         Scanner scanner;
         Vector<NeighborInfo> peerNeighborInfoFromConfig = new Vector<NeighborInfo>();
-        int numPreferredNeighbors;
-        int unChokingInterval;
-        int idealChokingInterval;
-        String fileName;
-        int fileSize; //will need to be able to store large numbers
-        int pieceSize;
+        int numPreferredNeighbors = -1, unChokingInterval = -1, idealChokingInterval = -1;
+        String fileName = "";
+        long fileSize = -1; //will need to be able to store large numbers
+        long pieceSize = -1;
         try {
             index = Integer.parseInt(args[0]);
         }catch (Exception e) {
             System.out.println("Invalid input ID");
         }
-        try {
+        try { // Read config info from common.
             File common = new File("./Common.cfg");
             String peerInfoString = Files.readString(common.toPath());
             scanner = new Scanner(peerInfoString);
@@ -503,7 +496,7 @@ public class Peer {
         } catch (Exception e) {
             System.out.println("Failed to open Common.cfg");
         }
-        try {
+        try {// Store all neighbor information up to the peer running this program. Will need to pass this into peer construction
             File peerNeighborInfo = new File("./PeerInfo.cfg");
             String peerNeighborInfoString = Files.readString(peerNeighborInfo.toPath());
             scanner = new Scanner(peerNeighborInfoString);
@@ -518,10 +511,12 @@ public class Peer {
         } catch (Exception e) {
             System.out.println("Failed to open PeerInfo.cfg");
         }
-        // TODO
-        // Read config info from common.
-        // Store all neighbor information up to the peer running this program. Will need to pass this into peer construction
-        //Peer peer = new Peer();
+
+        if(index == -1) throw new Exception("invalid ID");
+         Peer peer = new Peer(peerNeighborInfoFromConfig.get(index).id,
+                numPreferredNeighbors,unChokingInterval,idealChokingInterval,fileName,
+                fileSize,pieceSize,peerNeighborInfoFromConfig.get(index).port,
+                peerNeighborInfoFromConfig.get(index).hasFile,peerNeighborInfoFromConfig);
     }
 }
 

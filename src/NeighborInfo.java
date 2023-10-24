@@ -5,12 +5,12 @@ public class NeighborInfo {
         int id;
         String name;
         int port;
-        int hasFileFlag;
+        boolean hasFile;
 
         public NeighborInfo(int id, String address, int port, int hasFileFlag){
             this.id = id;
             this.name = address;
             this.port = port;
-            this.hasFileFlag = hasFileFlag;
+            this.hasFile = hasFileFlag > 0;
         }
 }
