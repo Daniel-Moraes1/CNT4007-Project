@@ -22,13 +22,14 @@ public class Peer {
     private volatile HashSet <Neighbor> chokedNeighbors;
     private volatile int countFinishedNeighbors;
     private volatile int numConnections;
-    private volatile int maxConnections;
+    private int maxConnections;
     private volatile int unchokeInterval;
-    private volatile int optimisticUnchokeInterval;
-    private volatile String fileName;
-    private volatile long fileSize;
-    private volatile long pieceSize;
-    private volatile int totalPieces;
+    private int optimisticUnchokeInterval;
+    private String fileName;
+    private long fileSize;
+    private long pieceSize;
+    private int totalPieces;
+    private volatile int numPieces;
     private volatile ServerSocket welcomeSocket;
     private volatile boolean finished;
     private volatile boolean listening;
@@ -108,7 +109,9 @@ public class Peer {
         this.requested = new BitSet(totalPieces);
         // If peer has the file set bits for all pieces to true
         if (hasFile_) {
-            bitfield.set(0, bitfield.size(), true);
+            this.bitfield.set(0, bitfield.size(), true);
+            this.numPieces = totalPieces;
+            this.finished = true;
         }
         this.p2pFile = new P2PFile(fileName_, fileSize, pieceSize);
 
@@ -345,7 +348,13 @@ public class Peer {
                     else {
                         byte[] pieceData = in.readNBytes(messageLength-1-4);
                         p2pFile.writePiece(pieceIndex, pieceData);
-                        this.bitfield.set(pieceIndex, true);
+                        if (!this.bitfield.get(pieceIndex)) {
+                            this.bitfield.set(pieceIndex, true);
+                            numPieces++;
+                            if (numPieces == totalPieces) {
+                                this.finished = true;
+                            }
+                        }
 
                         // When we get a piece, inform all neighbors that we have that piece. Re-evaluate interest
                         for (int i=0; i<neighbors.size(); i++) {
@@ -362,6 +371,7 @@ public class Peer {
                         }
                         neighbor.waitingForPiece = false;
                     }
+
                     break;
             }
         }
@@ -587,7 +597,7 @@ public class Peer {
         long pieceSize = -1;
         try {
             index = Integer.parseInt(args[0]);
-        }catch (Exception e) {
+        } catch (Exception e) {
             System.out.println("Invalid input ID");
         }
         try { // Read config info from common.
@@ -632,12 +642,13 @@ public class Peer {
             System.out.println("Failed to open PeerInfo.cfg");
         }
 
-        if(index == -1) throw new Exception("invalid ID");
+        if(index == -1)  {
+            throw new Exception("invalid ID");
+        }
+
         Peer peer = new Peer(peerNeighborInfoFromConfig.get(index).id,
                 numPreferredNeighbors,unChokingInterval,idealChokingInterval,fileName,
                 fileSize,pieceSize,peerNeighborInfoFromConfig.get(index).port,
-                peerNeighborInfoFromConfig.get(index).hasFile,peerNeighborInfoFromConfig);
+                peerNeighborInfoFromConfig.get(index).hasFile, peerNeighborInfoFromConfig);
     }
 }
-
-
