@@ -10,6 +10,8 @@ import java.net.*;
 import java.io.*;
 import java.util.HashSet;
 import java.util.Random;
+import java.util.Vector;
+import java.time;
 
 
 public class Peer {
@@ -31,6 +33,7 @@ public class Peer {
     private volatile boolean finished;
     private volatile boolean listening;
     private volatile P2PFile p2pFile;
+    private volatile Thread welcomeThread;
 
     public class Neighbor {
         public volatile int id;
@@ -47,14 +50,15 @@ public class Peer {
         public volatile HashSet<Integer> piecesForPeer; // Track pieces neighbor has that peer does not have
         public volatile boolean waitingForPiece;
         public volatile int piecesInInterval;
+        public volatile Thread requestThread;
+        public volatile Thread initiatorThread;
 
 
-        public Neighbor(int id_, String address_, int welcomeSocket) throws IOException, ClassNotFoundException {
+        public Neighbor(int id_, String address_, int welcomeSocket) throws IOException, ClassNotFoundException, InterruptedException {
             this.id = id_;
             this.address = address_;
             this.bitfield = new BitSet(totalPieces);
             this.finished = false;
-            this.connection = fetchPort(address_, welcomeSocket);
             this.interestedInPeer = false;
             this.interestedInNeighbor = false;
             this.chokedByPeer = true;
@@ -63,6 +67,8 @@ public class Peer {
             this.piecesForPeer = new HashSet<Integer>();
             this.waitingForPiece = false;
             this.piecesInInterval = 0;
+            this.connection = fetchPort(address_, welcomeSocket);
+            createNeighborThreads(this);
         }
         public Neighbor(int id, Socket connection_) throws IOException, ClassNotFoundException {
             this.id = id;
@@ -96,7 +102,7 @@ public class Peer {
 
     public Peer(int id_, int maxConnections_, int unchokingInterval_,
                 int optimisticUnchokingInterval_, String fileName_,
-                int fileSize_, int pieceSize_, int welcomePort_, boolean hasFile_) throws IOException {
+                int fileSize_, int pieceSize_, int welcomePort_, boolean hasFile_, Vector<NeighborInfo> neighborInfo) throws IOException, InterruptedException {
         this.id = id_;
         this.maxConnections = maxConnections_;
         this.unchokingInterval = unchokingInterval_;
@@ -117,6 +123,19 @@ public class Peer {
             bitfield.set(0, bitfield.size(), true);
         }
         this.p2pFile = new P2PFile(fileName_, pieceSize);
+        for (int i=0; i<peerInfo.size(); i++) {
+            Neighbor n = new Neighbor(peerInfo[i].id, peerInfo[i].address, peerInfo[i].welcomeSocket);
+            neighbors.add(n);
+        }
+        this.welcomeThread = new Thread(() -> {
+            try {
+                this.listenForNewNeighbor();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
+        welcomeThread.run();
+        welcomeThread.join();
     }
 
     private void listenForNewNeighbor() throws Exception {
@@ -175,24 +194,28 @@ public class Peer {
             numConnections++;
         }
 
-        Thread readerThread = new Thread(() -> {
+        createNeighborThreads(n);
+    }
+
+    public void createNeighborThreads(Neighbor n) throws InterruptedException {
+        n.requestThread = new Thread(() -> {
             try {
                 this.responder(n);
             } catch (Exception e) {
                 e.printStackTrace();
             }
         });
-        readerThread.start();
-        readerThread.join();
-        Thread writerThread = new Thread(() -> {
+        n.requestThread.start();
+        n.requestThread.join();
+        n.initiatorThread = new Thread(() -> {
             try {
                 this.initiator(n);
             } catch (IOException e) {
                 e.printStackTrace();
             }
         });
-        writerThread.start();
-        writerThread.join();
+        n.initiatorThread.start();
+        n.initiatorThread.join();
     }
 
     public int handShake(Socket s) throws Exception {
@@ -365,6 +388,11 @@ public class Peer {
         }
     }
 
+    public void timer() {
+
+
+    }
+
     private void sendMessage(MessageType messageType, OutputStream out, byte[] message) throws IOException {
         int messageLength = message.length + 1;
         byte[] messageLengthBytes = intToFourBytes(messageLength);
@@ -455,7 +483,6 @@ public class Peer {
         // Read config info from common.
         // Store all neighbor information up to the peer running this program. Will need to pass this into peer construction
         //Peer peer = new Peer();
-
     }
 }
 
