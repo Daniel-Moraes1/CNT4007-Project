@@ -123,8 +123,8 @@ public class Peer {
             bitfield.set(0, bitfield.size(), true);
         }
         this.p2pFile = new P2PFile(fileName_, pieceSize);
-        for (int i=0; i<peerInfo.size(); i++) {
-            Neighbor n = new Neighbor(peerInfo[i].id, peerInfo[i].address, peerInfo[i].welcomeSocket);
+        for (int i=0; i<neighborInfo.size(); i++) {
+            Neighbor n = new Neighbor(neighborInfo.get(i).id, neighborInfo.get(i).address, neighborInfo.get(i).welcomeSocket);
             neighbors.add(n);
         }
         this.welcomeThread = new Thread(() -> {
