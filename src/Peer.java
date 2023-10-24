@@ -41,6 +41,7 @@ public class Peer {
     public class Neighbor {
         public volatile int id;
         public volatile String address;
+        public volatile int welcomePort;
         public volatile int packetCount;
         public volatile BitSet bitfield;
         public volatile boolean choked;
@@ -48,7 +49,6 @@ public class Peer {
         public volatile Socket connection;
         public volatile boolean  interestedInPeer; // Is neighbor interested in Peer's pieces
         public volatile boolean  interestedInNeighbor; // Is Peer interested in neighbor's pieces
-        public volatile boolean chokedByPeer; // Is neighbor choked by Peer
         public volatile boolean chokedByNeighbor; // Is Peer choked by neighbor
         public volatile HashSet<Integer> piecesForPeer; // Track pieces neighbor has that peer does not have
         public volatile boolean waitingForPiece;
@@ -57,22 +57,21 @@ public class Peer {
         public volatile Thread initiatorThread;
 
 
-        public Neighbor(int id_, String address_, int welcomeSocket) throws IOException, ClassNotFoundException, InterruptedException {
+        public Neighbor(int id_, String address_, int welcomePort_) throws IOException, ClassNotFoundException, InterruptedException {
             this.id = id_;
             this.address = address_;
+            this.welcomePort = welcomePort_;
             this.bitfield = new BitSet(totalPieces);
             this.finished = false;
             this.interestedInPeer = false;
             this.interestedInNeighbor = false;
-            this.chokedByPeer = true;
             this.chokedByNeighbor = true;
             this.packetCount = 0;
             this.piecesForPeer = new HashSet<Integer>();
             this.waitingForPiece = false;
             this.piecesInInterval = 0;
-            this.connection = fetchPort(address_, welcomeSocket);
-            createNeighborThreads(this);
         }
+
         public Neighbor(int id, Socket connection_) throws IOException, ClassNotFoundException {
             this.id = id;
             this.bitfield = new BitSet(totalPieces);
@@ -80,32 +79,18 @@ public class Peer {
             this.connection = connection_;
             this.interestedInPeer = false;
             this.interestedInNeighbor = false;
-            this.chokedByPeer = true;
             this.chokedByNeighbor = true;
             this.packetCount = 0;
             this.piecesForPeer = new HashSet<Integer>();
             this.waitingForPiece = false;
             this.piecesInInterval = 0;
         }
-
-        private Socket fetchPort(String neighborName, int welcomeSocket) throws IOException, ClassNotFoundException {
-            Socket tempSocket = new Socket(neighborName, welcomeSocket);
-            ObjectInputStream in = new ObjectInputStream(tempSocket.getInputStream());
-            int portNumber = in.readInt();
-            tempSocket.close();
-            Socket newSocket = new Socket(neighborName, portNumber);
-            if (numConnections < maxConnections) {
-                this.chokedByPeer = false;
-                numConnections++;
-            }
-            return new Socket(neighborName,  portNumber);
-        }
-
     }
 
     public Peer(int id_, int maxConnections_, int unchokingInterval_,
                 int optimisticUnchokingInterval_, String fileName_,
-                long fileSize_, long pieceSize_, int welcomePort_, boolean hasFile_, Vector<NeighborInfo> neighborInfo) throws IOException, InterruptedException, ClassNotFoundException {
+                long fileSize_, long pieceSize_, int welcomePort_, boolean hasFile_, Vector<NeighborInfo> neighborInfo)
+                throws IOException, InterruptedException, ClassNotFoundException {
         this.id = id_;
         this.maxConnections = maxConnections_;
         this.unchokeInterval = unchokingInterval_;
@@ -126,10 +111,13 @@ public class Peer {
             bitfield.set(0, bitfield.size(), true);
         }
         this.p2pFile = new P2PFile(fileName_, fileSize, pieceSize);
+
         for (int i=0; i<neighborInfo.size(); i++) {
             Neighbor n = new Neighbor(neighborInfo.get(i).id, neighborInfo.get(i).name, neighborInfo.get(i).port);
             neighbors.add(n);
+            n.connection = fetchPort(n);
         }
+
         this.welcomeThread = new Thread(() -> {
             try {
                 this.listenForNewNeighbor();
@@ -139,6 +127,22 @@ public class Peer {
         });
         welcomeThread.run();
         welcomeThread.join();
+    }
+
+    private Socket fetchPort(Neighbor n) throws IOException, ClassNotFoundException {
+        Socket tempSocket = new Socket(n.address, n.welcomePort);
+        ObjectInputStream in = new ObjectInputStream(tempSocket.getInputStream());
+        int portNumber = in.readInt();
+        tempSocket.close();
+        Socket newSocket = new Socket(n.address, portNumber);
+        if (numConnections < maxConnections) {
+            this.unchokedNeighbors.add(n);
+            numConnections++;
+        }
+        else {
+            this.unchokedNeighbors.add(n);
+        }
+        return new Socket(n.address,  portNumber);
     }
 
     private void listenForNewNeighbor() throws Exception {
@@ -193,10 +197,12 @@ public class Peer {
         Neighbor n = new Neighbor(id, connection);
         neighbors.add(n);
         if (numConnections < maxConnections) {
-            n.chokedByPeer = false;
+            this.unchokedNeighbors.add(n);
             numConnections++;
         }
-
+        else {
+            this.chokedNeighbors.add(n);
+        }
         createNeighborThreads(n);
     }
 
@@ -317,7 +323,7 @@ public class Peer {
                     int requestedIndex = fourBytesToInt(requestIndexBytes);
                     if (!neighbor.choked) {
                         // TODO If the neighbor is not choked, send the piece
-                        //sendMessage(MessageType.PIECE, out, NEEDED_PIECE);
+                        //sendMessage(MessageType.PIECE, neighbor, NEEDED_PIECE);
                         neighbor.piecesInInterval++;
                     }
                     else {
@@ -448,10 +454,17 @@ public class Peer {
             }
         }
 
+        for (Neighbor n : unchokedNeighbors) {
+            if (!toUnchoke.contains(n) && this.optimisticUnchokedNeighbor != n) {
+                this.unchokedNeighbors.remove(n);
+                this.chokedNeighbors.add(n);
+            }
+        }
+
         for (int i=0; i<toUnchoke.size(); i++) {
-            if (neighbors.get(i).chokedByPeer) {
-                neighbors.get(i).chokedByPeer = false;
-                this.unchokedNeighbors.add(neighbors.get(i));
+            if (chokedNeighbors.contains(neighbors.get(i))) {
+                chokedNeighbors.remove(neighbors.get(i));
+                unchokedNeighbors.add(neighbors.get(i));
                 sendMessage(MessageType.UNCHOKE, neighbors.get(i), null);
             }
             if (neighbors.get(i) == this.optimisticUnchokedNeighbor) {
@@ -459,14 +472,7 @@ public class Peer {
                 this.optimisticUnchokedNeighbor = null;
             }
         }
-        for (Neighbor n : unchokedNeighbors) {
-            if (!toUnchoke.contains(n) && this.optimisticUnchokedNeighbor != n) {
-                n.chokedByPeer = true;
-                this.unchokedNeighbors.remove(n);
-                this.chokedNeighbors.add(n);
 
-            }
-        }
     }
     private void optimisticUnchoke() {
         for (int i=0; i<neighbors.size(); i++) {
