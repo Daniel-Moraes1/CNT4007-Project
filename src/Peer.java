@@ -4,12 +4,11 @@ import src.P2PFile;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.net.Socket;
-import java.util.BitSet;
-import java.util.List;
+import java.util.*;
 import java.net.*;
 import java.io.*;
-import java.util.HashSet;
-import java.util.Random;
+import java.nio.file.Files;
+
 
 
 public class Peer {
@@ -32,6 +31,9 @@ public class Peer {
     private volatile boolean listening;
     private volatile P2PFile p2pFile;
 
+
+
+
     public class Neighbor {
         public volatile int id;
         public volatile String address;
@@ -47,7 +49,6 @@ public class Peer {
         public volatile HashSet<Integer> piecesForPeer; // Track pieces neighbor has that peer does not have
         public volatile boolean waitingForPiece;
         public volatile int piecesInInterval;
-
 
         public Neighbor(int id_, String address_, int welcomeSocket) throws IOException, ClassNotFoundException {
             this.id = id_;
@@ -436,18 +437,57 @@ public class Peer {
 
     public static void main(String[] args) {
         int index;
+        Scanner scanner;
+        Vector<NeighborInfo> peerNeighborInfoFromConfig = new Vector<NeighborInfo>();
+        int numPreferredNeighbors;
+        int unChokingInterval;
+        int idealChokingInterval;
+        String fileName;
+        int fileSize; //will need to be able to store large numbers
+        int pieceSize;
         try {
-            index = Integer.valueOf(args[0]);
-        } catch (Exception e) {
+            index = Integer.parseInt(args[0]);
+        }catch (Exception e) {
             System.out.println("Invalid input ID");
         }
         try {
             File common = new File("./Common.cfg");
+            String peerInfoString = Files.readString(common.toPath());
+            scanner = new Scanner(peerInfoString);
+            String line = scanner.nextLine();
+            String[] information = line.split(" ");
+            numPreferredNeighbors = Integer.parseInt(information[1]);
+            line = scanner.nextLine();
+            information = line.split(" ");
+            unChokingInterval = Integer.parseInt(information[1]);
+            line = scanner.nextLine();
+            information = line.split(" ");
+            idealChokingInterval = Integer.parseInt(information[1]);
+            line = scanner.nextLine();
+            information = line.split(" ");
+            fileName = information[1];
+            line = scanner.nextLine();
+            information = line.split(" ");
+            fileSize = Integer.parseInt(information[1]);
+            line = scanner.nextLine();
+            information = line.split(" ");
+            pieceSize = Integer.parseInt(information[1]);
+            scanner.close();
         } catch (Exception e) {
             System.out.println("Failed to open Common.cfg");
         }
         try {
-            File peerInfo = new File("./PeerInfo.cfg");
+            File peerNeighborInfo = new File("./PeerInfo.cfg");
+            String peerNeighborInfoString = Files.readString(peerNeighborInfo.toPath());
+            scanner = new Scanner(peerNeighborInfoString);
+            while (scanner.hasNextLine()) {
+                String line = scanner.nextLine();
+                String[] columnSections = line.split(" ");
+                if (columnSections.length == 4) {
+                    peerNeighborInfoFromConfig.addElement(new NeighborInfo(Integer.parseInt(columnSections[0]), columnSections[1], Integer.parseInt(columnSections[2]), Integer.parseInt(columnSections[3])));
+                }
+            }
+            scanner.close();
         } catch (Exception e) {
             System.out.println("Failed to open PeerInfo.cfg");
         }
