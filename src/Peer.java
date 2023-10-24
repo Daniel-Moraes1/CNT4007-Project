@@ -18,6 +18,8 @@ public class Peer {
     private volatile BitSet bitfield;
     private volatile BitSet requested;
     private volatile List <Neighbor> neighbors;
+    private volatile HashSet <Neighbor> unchokedNeighbors;
+    private volatile HashSet <Neighbor> chokedNeighbors;
     private volatile int countFinishedNeighbors;
     private volatile int numConnections;
     private volatile int maxConnections;
@@ -26,7 +28,6 @@ public class Peer {
     private volatile String fileName;
     private volatile long fileSize;
     private volatile long pieceSize;
-    //private volatile long totalPieces;
     private volatile int totalPieces;
     private volatile ServerSocket welcomeSocket;
     private volatile boolean finished;
@@ -35,6 +36,7 @@ public class Peer {
     private volatile Thread welcomeThread;
     private volatile long lastUnchoke;
     private volatile long lastOptimisticUnchoke;
+    public volatile Neighbor optimisticUnchokedNeighbor;
 
     public class Neighbor {
         public volatile int id;
@@ -239,7 +241,6 @@ public class Peer {
     public void responder(Neighbor neighbor) throws Exception {
         // For each message, get message type
         InputStream in = neighbor.connection.getInputStream();
-        OutputStream out = neighbor.connection.getOutputStream();
         while(listening) {
             byte[] lengthBytes = in.readNBytes(4); // Wait for message to come in
             int messageLength = fourBytesToInt(lengthBytes);
@@ -287,7 +288,7 @@ public class Peer {
                     int index = fourBytesToInt(byteIndex);
                     if (!this.bitfield.get(index)) {
                         neighbor.piecesForPeer.add(index);
-                        sendMessage(MessageType.INTERESTED, out, null);
+                        sendMessage(MessageType.INTERESTED, neighbor, null);
                     }
                     break;
 
@@ -303,10 +304,10 @@ public class Peer {
                     checkInterestInNeighbor(neighbor);
 
                     if (neighbor.interestedInNeighbor) {
-                        sendMessage(MessageType.INTERESTED, out, null); // Send interested in neighbor
+                        sendMessage(MessageType.INTERESTED, neighbor, null); // Send interested in neighbor
                     }
                     else {
-                        sendMessage(MessageType.NOT_INTERESTED, out, null); // Send not interested in neighbor
+                        sendMessage(MessageType.NOT_INTERESTED, neighbor, null); // Send not interested in neighbor
                     }
                     break;
 
@@ -322,7 +323,7 @@ public class Peer {
                     else {
                         // We can send an empty piece for the request index if the neighbor has been choked
                         // This will let then know to request the piece from another neighbor
-                        sendMessage(MessageType.PIECE, out, requestIndexBytes);
+                        sendMessage(MessageType.PIECE, neighbor, requestIndexBytes);
                         neighbor.bitfield.set(requestedIndex, true);
                     }
                     break;
@@ -343,14 +344,14 @@ public class Peer {
 
                         // When we get a piece, inform all neighbors that we have that piece. Re-evaluate interest
                         for (int i=0; i<neighbors.size(); i++) {
-                            sendMessage(MessageType.HAVE, out, pieceIndexBytes);
+                            sendMessage(MessageType.HAVE, neighbor, pieceIndexBytes);
 
                             // Upon receiving a new packet, remove packet index for set of packets that neighbors have and peer does not
                             // If set of missing packets that a neighbor has becomes 0, send NOT_INTERESTED
                             if (neighbors.get(i).piecesForPeer.contains(pieceIndex)) {
                                 neighbors.get(i).piecesForPeer.remove(pieceIndex);
                                 if (!checkInterestInNeighbor(neighbors.get(i))) {
-                                    sendMessage(MessageType.NOT_INTERESTED, out, null);
+                                    sendMessage(MessageType.NOT_INTERESTED, neighbor, null);
                                 }
                             }
                         }
@@ -381,7 +382,7 @@ public class Peer {
                             count++;
                         }
                         byte[] pieceNumberBytes = intToFourBytes(pieceNumber);
-                        sendMessage(MessageType.REQUEST, out, pieceNumberBytes);
+                        sendMessage(MessageType.REQUEST, neighbor, pieceNumberBytes);
                         neighbor.waitingForPiece = true;
                     }
                 }
@@ -389,22 +390,92 @@ public class Peer {
         }
     }
 
-    public void timer() {
-        if (System.nanoTime() >= this.lastUnchoke + this.unchokeInterval) {
-            unchoke();
-            this.lastUnchoke = System.nanoTime();
+    // Locks / Mutexes
+    public void timer() throws IOException {
+        while(true) {
+            if (System.nanoTime() >= this.lastUnchoke + this.unchokeInterval) {
+                unchoke();
+                this.lastUnchoke = System.nanoTime();
 
-        }
-        if (System.nanoTime() >= this.lastOptimisticUnchoke + this.unchokeInterval) {
-            optimisticUnchoke();
-            this.lastOptimisticUnchoke = System.nanoTime();
+            }
+            if (System.nanoTime() >= this.lastOptimisticUnchoke + this.unchokeInterval) {
+                optimisticUnchoke();
+                this.lastOptimisticUnchoke = System.nanoTime();
+            }
         }
     }
 
-    private void unchoke(){}
-    private void optimisticUnchoke(){}
+    private void unchoke() throws IOException {
+        // Find peers with greatest download rates
+        // We can just sort for now, but not best TC
+        Vector<Neighbor> interestedInPeer = new Vector<Neighbor>();
+        for (int i=0; i<neighbors.size(); i++) {
+            if (neighbors.get(i).interestedInPeer) {
+                interestedInPeer.add(neighbors.get(i));
+            }
+        }
+        Collections.sort(interestedInPeer, new SortByDownloadRate());
+        Vector<Neighbor> toUnchoke = new Vector<Neighbor>();
+        for (int i=0 ; i<interestedInPeer.size()-1; i++) {
+            if (toUnchoke.size() == maxConnections) {
+                break;
+            }
+            if (interestedInPeer.get(i).piecesInInterval > interestedInPeer.get(i+1).piecesInInterval) {
+                toUnchoke.add(interestedInPeer.get(i));
+            }
+            else if (interestedInPeer.get(i).piecesInInterval == interestedInPeer.get(i+1).piecesInInterval) {
+                Vector<Neighbor> tie = new Vector<Neighbor>();
+                while (i < interestedInPeer.size()-1 && interestedInPeer.get(i).piecesInInterval == interestedInPeer.get(i+1).piecesInInterval) {
+                    tie.add(neighbors.get(i));
+                    i++;
+                }
+                tie.add(neighbors.get(i));
 
-    private void sendMessage(MessageType messageType, OutputStream out, byte[] message) throws IOException {
+                if (tie.size() <= maxConnections - toUnchoke.size()) {
+                    for (int j=0; j<tie.size(); j++) {
+                        toUnchoke.add(tie.get(j));
+                    }
+                }
+                else {
+                    // Randomly select preferred neighbors among tied peers
+                    Random random = new Random();
+                    while (toUnchoke.size() < maxConnections) {
+                        int index = new Random().nextInt() % tie.size();
+                        toUnchoke.add(tie.get(index));
+                        tie.remove(index);
+                    }
+                }
+            }
+        }
+
+        for (int i=0; i<toUnchoke.size(); i++) {
+            if (neighbors.get(i).chokedByPeer) {
+                neighbors.get(i).chokedByPeer = false;
+                this.unchokedNeighbors.add(neighbors.get(i));
+                sendMessage(MessageType.UNCHOKE, neighbors.get(i), null);
+            }
+            if (neighbors.get(i) == this.optimisticUnchokedNeighbor) {
+                // TODO should we automatically reassign an optimistic unchoked neighbor if we promote one to preferred?
+                this.optimisticUnchokedNeighbor = null;
+            }
+        }
+        for (Neighbor n : unchokedNeighbors) {
+            if (!toUnchoke.contains(n) && this.optimisticUnchokedNeighbor != n) {
+                n.chokedByPeer = true;
+                this.unchokedNeighbors.remove(n);
+                this.chokedNeighbors.add(n);
+
+            }
+        }
+    }
+    private void optimisticUnchoke() {
+        for (int i=0; i<neighbors.size(); i++) {
+
+        }
+    }
+
+    private void sendMessage(MessageType messageType, Neighbor n, byte[] message) throws IOException {
+        OutputStream out = n.connection.getOutputStream();
         int messageLength = message.length + 1;
         byte[] messageLengthBytes = intToFourBytes(messageLength);
         int type = -1;
@@ -472,6 +543,12 @@ public class Peer {
         }
     }
 
+    // Not sure if this works
+    class SortByDownloadRate implements Comparator<Neighbor> {
+        public int compare(Neighbor a, Neighbor b) {
+            return a.piecesInInterval - b.piecesInInterval;
+        }
+    }
 
     public static void main(String[] args) throws Exception {
         int index = -1;
