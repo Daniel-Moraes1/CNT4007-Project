@@ -474,8 +474,25 @@ public class Peer {
 
     }
     private void optimisticUnchoke() {
-        for (int i=0; i<neighbors.size(); i++) {
-
+        Vector<Neighbor> interested = new Vector<Neighbor>();
+        for (Neighbor n : chokedNeighbors) {
+            if (n.interestedInPeer) {
+                interested.add(n);
+            }
+        }
+        if (interested.size() != 0) {
+            int random = new Random().nextInt()%interested.size();
+            if (optimisticUnchokedNeighbor != null) {
+                unchokedNeighbors.remove(optimisticUnchokedNeighbor);
+                chokedNeighbors.add(optimisticUnchokedNeighbor);
+            }
+            optimisticUnchokedNeighbor = interested.get(random);
+            unchokedNeighbors.add(interested.get(random));
+            chokedNeighbors.remove(interested.get(random));
+        }
+        else if (optimisticUnchokedNeighbor != null) {
+            // not sure if we need to log this
+            optimisticUnchokedNeighbor = optimisticUnchokedNeighbor;
         }
     }
 
