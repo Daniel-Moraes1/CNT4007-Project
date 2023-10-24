@@ -370,26 +370,24 @@ public class Peer {
     // Thread for starting message sends to neighbors (piece requests, chokes/unchokes)
     public void initiator(Neighbor neighbor) throws IOException {
         OutputStream out = neighbor.connection.getOutputStream();
-        if (!this.finished) {
-            if (!neighbor.chokedByNeighbor) {
-                if (neighbor.interestedInNeighbor ) {
-                    if (!neighbor.waitingForPiece) {
-                        //If we are not choked by the neighbor, neighbor has pieces we do not,
-                        // and we do not have an outstanding piece request to neighbor, find a piece to request
-                        int random = new Random().nextInt() % neighbor.piecesForPeer.size();
-                        int count = 0;
-                        int pieceNumber = 0;
-                        for (int iterator : neighbor.piecesForPeer) {
-                            if (count == random) {
-                                pieceNumber = iterator;
-                                break;
-                            }
-                            count++;
+        if (!neighbor.chokedByNeighbor) {
+            if (neighbor.interestedInNeighbor ) {
+                if (!neighbor.waitingForPiece) {
+                    //If we are not choked by the neighbor, neighbor has pieces we do not,
+                    // and we do not have an outstanding piece request to neighbor, find a piece to request
+                    int random = new Random().nextInt() % neighbor.piecesForPeer.size();
+                    int count = 0;
+                    int pieceNumber = 0;
+                    for (int iterator : neighbor.piecesForPeer) {
+                        if (count == random) {
+                            pieceNumber = iterator;
+                            break;
                         }
-                        byte[] pieceNumberBytes = intToFourBytes(pieceNumber);
-                        sendMessage(MessageType.REQUEST, neighbor, pieceNumberBytes);
-                        neighbor.waitingForPiece = true;
+                        count++;
                     }
+                    byte[] pieceNumberBytes = intToFourBytes(pieceNumber);
+                    sendMessage(MessageType.REQUEST, neighbor, pieceNumberBytes);
+                    neighbor.waitingForPiece = true;
                 }
             }
         }
