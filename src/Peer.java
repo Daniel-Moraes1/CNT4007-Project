@@ -316,8 +316,8 @@ public class Peer {
                     byte[] requestIndexBytes = in.readNBytes(4);
                     int requestedIndex = fourBytesToInt(requestIndexBytes);
                     if (!neighbor.choked) {
-                        // TODO If the neighbor is not choked, send the piece
-                        //sendMessage(MessageType.PIECE, out, NEEDED_PIECE);
+                        //sends requested index piece from peer's p2p file to neighbor asking for it
+                        sendMessage(MessageType.PIECE, neighbor, p2pFile.getPiece(requestedIndex));
                         neighbor.piecesInInterval++;
                     }
                     else {
@@ -333,13 +333,13 @@ public class Peer {
                     // The first four bytes of a piece payload is the index
                     byte[] pieceIndexBytes = in.readNBytes(4);
                     int pieceIndex = fourBytesToInt(pieceIndexBytes);
-                    if (messageLength == 9) {
+                    if (messageLength == 5) {
                         // We were choked by the neighbor and the piece was not sent over
                         requested.set(pieceIndex, false);
                     }
                     else {
                         byte[] pieceData = in.readNBytes(messageLength-1-4);
-                        // TODO SAVE PIECE DATA TO FILE
+                        p2pFile.writePiece(pieceIndex, pieceData);
                         this.bitfield.set(pieceIndex, true);
 
                         // When we get a piece, inform all neighbors that we have that piece. Re-evaluate interest
