@@ -393,7 +393,7 @@ public class Peer {
         }
     }
 
-    // Thread for starting message sends to neighbors (piece requests, chokes/unchokes)
+    // Thread for starting message sends to neighbors (piece requests)
     public void initiator(Neighbor neighbor) throws IOException {
         OutputStream out = neighbor.connection.getOutputStream();
         if (!neighbor.chokedByNeighbor) {
@@ -502,7 +502,6 @@ public class Peer {
         for (int i=0; i<neighbors.size(); i++) {
             neighbors.get(i).piecesInInterval = 0;
         }
-
     }
     private void optimisticUnchoke() {
         Vector<Neighbor> interested = new Vector<Neighbor>();
