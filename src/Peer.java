@@ -45,6 +45,7 @@ public class Peer {
         public volatile int welcomePort;
         public volatile int packetCount;
         public volatile BitSet bitfield;
+        public volatile int numPieces;
         public volatile boolean finished;
         public volatile Socket connection;
         public volatile boolean  interestedInPeer; // Is neighbor interested in Peer's pieces
@@ -70,6 +71,7 @@ public class Peer {
             this.piecesForPeer = new HashSet<Integer>();
             this.waitingForPiece = false;
             this.piecesInInterval = 0;
+            this.numPieces = 0;
         }
 
         public Neighbor(int id, Socket connection_) throws IOException, ClassNotFoundException {
@@ -84,6 +86,7 @@ public class Peer {
             this.piecesForPeer = new HashSet<Integer>();
             this.waitingForPiece = false;
             this.piecesInInterval = 0;
+            this.numPieces = 0;
         }
     }
 
@@ -294,6 +297,14 @@ public class Peer {
                     byte[] byteIndex = in.readNBytes(4);
 
                     int index = fourBytesToInt(byteIndex);
+
+                    if (!neighbor.bitfield.get(index)) {
+                        neighbor.bitfield.set(index, true);
+                        neighbor.numPieces++;
+                        if (neighbor.numPieces == totalPieces) {
+                            neighbor.finished = true;
+                        }
+                    }
                     if (!this.bitfield.get(index)) {
                         neighbor.piecesForPeer.add(index);
                         sendMessage(MessageType.INTERESTED, neighbor, null);
@@ -305,9 +316,15 @@ public class Peer {
                     byte[] bitfieldBytes = in.readNBytes(messageLength-1);
                     neighbor.bitfield = BitSet.valueOf(bitfieldBytes);
                     for (int i=0; i<neighbor.bitfield.size(); i++) {
-                        if (neighbor.bitfield.get(i) && !this.bitfield.get(i)) {
-                            neighbor.piecesForPeer.add(i);
+                        if (neighbor.bitfield.get(i)) {
+                            neighbor.numPieces++;
+                            if (!this.bitfield.get(i)) {
+                                neighbor.piecesForPeer.add(i);
+                            }
                         }
+                    }
+                    if (neighbor.numPieces == totalPieces) {
+                        neighbor.finished = true;
                     }
                     checkInterestInNeighbor(neighbor);
 
