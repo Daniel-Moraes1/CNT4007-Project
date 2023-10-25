@@ -1,7 +1,6 @@
 package src;
 
 public class NeighborInfo {
-
         int id;
         String name;
         int port;
