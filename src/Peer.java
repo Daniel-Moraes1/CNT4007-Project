@@ -11,7 +11,6 @@ import java.net.SocketTimeoutException;
 import java.nio.file.Files;
 import java.util.*;
 
-
 public class Peer {
 
     private volatile int id;
@@ -38,6 +37,8 @@ public class Peer {
     private volatile long lastUnchoke;
     private volatile long lastOptimisticUnchoke;
     public volatile Neighbor optimisticUnchokedNeighbor;
+
+    public Log logObj;
 
     public class Neighbor {
         public volatile int id;
@@ -92,6 +93,7 @@ public class Peer {
                 long fileSize_, long pieceSize_, int welcomePort_, boolean hasFile_, Vector<NeighborInfo> neighborInfo)
                 throws IOException, InterruptedException, ClassNotFoundException {
         this.id = id_;
+        this.logObj = new Log(this.id);
         this.maxConnections = maxConnections_;
         this.unchokeInterval = unchokingInterval_;
         this.optimisticUnchokeInterval = optimisticUnchokingInterval_;
@@ -118,6 +120,7 @@ public class Peer {
             Neighbor n = new Neighbor(neighborInfo.get(i).id, neighborInfo.get(i).name, neighborInfo.get(i).port);
             neighbors.add(n);
             n.connection = fetchPort(n);
+            this.logObj.logTCPConnection(this.id,n.id);
         }
 
         this.welcomeThread = new Thread(() -> {
@@ -169,7 +172,7 @@ public class Peer {
                 });
                 connectionThread.start();
                 connectionThread.join(10000); // Allow 10 seconds for neighbor to connect
-
+                //logObj.logConnectedFrom(this.id);
 
             }
         }
@@ -197,6 +200,7 @@ public class Peer {
         }
 
         Neighbor n = new Neighbor(id, connection);
+        logObj.logConnectedFrom(this.id, n.id);
         neighbors.add(n);
         if (numConnections < maxConnections) {
             this.unchokedNeighbors.add(n);
@@ -312,9 +316,11 @@ public class Peer {
                     checkInterestInNeighbor(neighbor);
 
                     if (neighbor.interestedInNeighbor) {
+                        logObj.logReceivedInterested(this.id,neighbor.id);
                         sendMessage(MessageType.INTERESTED, neighbor, null); // Send interested in neighbor
                     }
                     else {
+                        logObj.logReceivedNotInterested(this.id,neighbor.id);
                         sendMessage(MessageType.NOT_INTERESTED, neighbor, null); // Send not interested in neighbor
                     }
                     break;
@@ -357,6 +363,7 @@ public class Peer {
 
                         // When we get a piece, inform all neighbors that we have that piece. Re-evaluate interest
                         for (int i=0; i<neighbors.size(); i++) {
+                            logObj.logReceivedHave(this.id,neighbors.get(i).id,pieceIndex);
                             sendMessage(MessageType.HAVE, neighbor, pieceIndexBytes);
 
                             // Upon receiving a new packet, remove packet index for set of packets that neighbors have and peer does not
@@ -364,6 +371,7 @@ public class Peer {
                             if (neighbors.get(i).piecesForPeer.contains(pieceIndex)) {
                                 neighbors.get(i).piecesForPeer.remove(pieceIndex);
                                 if (!checkInterestInNeighbor(neighbors.get(i))) {
+                                    logObj.logReceivedNotInterested(this.id,neighbors.get(i).id);
                                     sendMessage(MessageType.NOT_INTERESTED, neighbor, null);
                                 }
                             }
@@ -424,6 +432,7 @@ public class Peer {
         for (int i=0; i<neighbors.size(); i++) {
             if (neighbors.get(i).interestedInPeer) {
                 interestedInPeer.add(neighbors.get(i));
+                logObj.logReceivedInterested(this.id, neighbors.get(i).id);
             }
         }
         Collections.sort(interestedInPeer, new SortByDownloadRate());
@@ -465,6 +474,7 @@ public class Peer {
             if (!toUnchoke.contains(n) && this.optimisticUnchokedNeighbor != n) {
                 this.unchokedNeighbors.remove(n);
                 this.chokedNeighbors.add(n);
+                logObj.logChoked(this.id,n.id);
                 sendMessage(MessageType.CHOKE, n, null);
             }
         }
@@ -473,6 +483,7 @@ public class Peer {
             if (chokedNeighbors.contains(neighbors.get(i))) {
                 chokedNeighbors.remove(neighbors.get(i));
                 unchokedNeighbors.add(neighbors.get(i));
+                logObj.logUnchoked(this.id,neighbors.get(i).id);
                 sendMessage(MessageType.UNCHOKE, neighbors.get(i), null);
             }
             if (neighbors.get(i) == this.optimisticUnchokedNeighbor) {
@@ -480,14 +491,13 @@ public class Peer {
                 this.optimisticUnchokedNeighbor = null;
             }
         }
-
         // Reset pieces downloaded in interval for all neighbors
         for (int i=0; i<neighbors.size(); i++) {
             neighbors.get(i).piecesInInterval = 0;
         }
 
     }
-    private void optimisticUnchoke() {
+    private void optimisticUnchoke() throws IOException {
         Vector<Neighbor> interested = new Vector<Neighbor>();
         for (Neighbor n : chokedNeighbors) {
             if (n.interestedInPeer) {
@@ -499,6 +509,7 @@ public class Peer {
             if (optimisticUnchokedNeighbor != null) {
                 unchokedNeighbors.remove(optimisticUnchokedNeighbor);
                 chokedNeighbors.add(optimisticUnchokedNeighbor);
+                logObj.logOptimisticallyUnchokedNeighbor(this.id,optimisticUnchokedNeighbor.id);
             }
             optimisticUnchokedNeighbor = interested.get(random);
             unchokedNeighbors.add(interested.get(random));
