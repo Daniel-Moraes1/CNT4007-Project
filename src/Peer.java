@@ -16,7 +16,7 @@ public class Peer {
     private volatile int id;
     private volatile BitSet bitfield;
     private volatile BitSet requested;
-    private volatile List <Neighbor> neighbors;
+    private volatile ArrayList <Neighbor> neighbors;
     private volatile HashSet <Neighbor> unchokedNeighbors;
     private volatile HashSet <Neighbor> chokedNeighbors;
     private volatile int countFinishedNeighbors;
@@ -97,6 +97,9 @@ public class Peer {
                 throws IOException, InterruptedException, ClassNotFoundException {
         this.id = id_;
         this.logObj = new Log(this.id);
+        this.neighbors = new ArrayList<Neighbor>();
+        this.unchokedNeighbors = new HashSet<Neighbor>();
+        this.chokedNeighbors = new  HashSet <Neighbor>();
         this.maxConnections = maxConnections_;
         this.unchokeInterval = unchokingInterval_;
         this.optimisticUnchokeInterval = optimisticUnchokingInterval_;
@@ -614,22 +617,21 @@ public class Peer {
     }
 
     public static void main(String[] args) throws Exception {
-        int index = -1;
+        int id = -1;
         Scanner scanner;
         Vector<NeighborInfo> peerNeighborInfoFromConfig = new Vector<NeighborInfo>();
-        int numPreferredNeighbors = -1, unChokingInterval = -1, idealChokingInterval = -1;
+        int numPreferredNeighbors = -1, unChokingInterval = -1, optimisticUnChokingInterval = -1;
         String fileName = "";
         long fileSize = -1; //will need to be able to store large numbers
         long pieceSize = -1;
         try {
-            index = Integer.parseInt(args[0]);
+            id = Integer.parseInt(args[0]);
         } catch (Exception e) {
             System.out.println("Invalid input ID");
         }
-        try { // Read config info from common.
-            File common = new File("./Common.cfg");
-            String peerInfoString = Files.readString(common.toPath());
-            scanner = new Scanner(peerInfoString);
+        //try { // Read config info from common.
+            File common = new File("./Config/Common.cfg");
+            scanner = new Scanner(common);
             String line = scanner.nextLine();
             String[] information = line.split(" ");
             numPreferredNeighbors = Integer.parseInt(information[1]);
@@ -638,7 +640,7 @@ public class Peer {
             unChokingInterval = Integer.parseInt(information[1]);
             line = scanner.nextLine();
             information = line.split(" ");
-            idealChokingInterval = Integer.parseInt(information[1]);
+            optimisticUnChokingInterval = Integer.parseInt(information[1]);
             line = scanner.nextLine();
             information = line.split(" ");
             fileName = information[1];
@@ -649,32 +651,41 @@ public class Peer {
             information = line.split(" ");
             pieceSize = Integer.parseInt(information[1]);
             scanner.close();
-        } catch (Exception e) {
-            System.out.println("Failed to open Common.cfg");
-        }
+        /*} catch (Exception e) {
+            throw new Exception("Failed to open Common.cfg");
+        }*/
+        int count = 0;
+        NeighborInfo peerInfo = new NeighborInfo(-1, "-1", -1, -1);
         try {// Store all neighbor information up to the peer running this program. Will need to pass this into peer construction
-            File peerNeighborInfo = new File("./PeerInfo.cfg");
-            String peerNeighborInfoString = Files.readString(peerNeighborInfo.toPath());
-            scanner = new Scanner(peerNeighborInfoString);
+            File peerNeighborInfo = new File("./Config/PeerInfo.cfg");
+            scanner = new Scanner(peerNeighborInfo);
             while (scanner.hasNextLine()) {
-                String line = scanner.nextLine();
+                line = scanner.nextLine();
                 String[] columnSections = line.split(" ");
                 if (columnSections.length == 4) {
-                    peerNeighborInfoFromConfig.addElement(new NeighborInfo(Integer.parseInt(columnSections[0]), columnSections[1], Integer.parseInt(columnSections[2]), Integer.parseInt(columnSections[3])));
+                    int neighborID = Integer.parseInt(columnSections[0]);
+                    if (neighborID == id) {
+                        peerInfo = new NeighborInfo(neighborID, columnSections[1], Integer.parseInt(columnSections[2]), Integer.parseInt(columnSections[3]));
+                        break;
+                    }
+                    else {
+                        peerNeighborInfoFromConfig.addElement(new NeighborInfo(neighborID, columnSections[1], Integer.parseInt(columnSections[2]), Integer.parseInt(columnSections[3])));
+                    }
+                    count++;
                 }
             }
             scanner.close();
         } catch (Exception e) {
-            System.out.println("Failed to open PeerInfo.cfg");
+            throw new Exception("Failed to open PeerInfo.cfg");
         }
 
-        if(index == -1)  {
+        if(id == -1)  {
             throw new Exception("invalid ID");
         }
 
-        Peer peer = new Peer(peerNeighborInfoFromConfig.get(index).id,
-                numPreferredNeighbors,unChokingInterval,idealChokingInterval,fileName,
-                fileSize,pieceSize,peerNeighborInfoFromConfig.get(index).port,
-                peerNeighborInfoFromConfig.get(index).hasFile, peerNeighborInfoFromConfig);
+        Peer peer = new Peer(peerInfo.id,
+                numPreferredNeighbors,unChokingInterval,optimisticUnChokingInterval,fileName,
+                fileSize,pieceSize,peerInfo.port,
+               peerInfo.hasFile, peerNeighborInfoFromConfig);
     }
 }
