@@ -617,6 +617,7 @@ public class Peer {
     }
 
     public static void main(String[] args) throws Exception {
+        System.out.println("hi");
         int id = -1;
         Scanner scanner;
         Vector<NeighborInfo> peerNeighborInfoFromConfig = new Vector<NeighborInfo>();
@@ -626,6 +627,8 @@ public class Peer {
         long pieceSize = -1;
         try {
             id = Integer.parseInt(args[0]);
+            System.out.println("Starting execution with id " + Integer.toString(id));
+
         } catch (Exception e) {
             System.out.println("Invalid input ID");
         }
