@@ -1,10 +1,10 @@
 JAVAC = javac
 JAR = jar
-JFLAGS = -d bin -cp lib/jsch-0.1.54.jar
+JFLAGS = -d bin
 SRC_DIR = src
 BIN_DIR = bin
 JAR_NAME = P2PNet.jar
-MAIN_CLASS = src.StartRemotePeers
+MAIN_CLASS = src.Peer
 
 SOURCES := $(wildcard $(SRC_DIR)/*.java)
 CLASSES := $(patsubst $(SRC_DIR)/%.java,$(BIN_DIR)/%.class,$(SOURCES))
@@ -14,6 +14,10 @@ all: $(CLASSES) jar
 $(BIN_DIR)/%.class: $(SRC_DIR)/%.java
 	@mkdir -p $(@D)
 	$(JAVAC) $(JFLAGS) $<
+
+$(BIN_DIR)/StartRemotePeers.class: $(SRC_DIR)/StartRemotePeers.java
+	@mkdir -p $(@D)
+	$(JAVAC) $(JFLAGS) -cp lib/jsch-0.1.54.jar $<
 
 jar: $(CLASSES)
 	$(JAR) cfe $(JAR_NAME) $(MAIN_CLASS) -C $(BIN_DIR) .
