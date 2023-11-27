@@ -94,7 +94,7 @@ public class Peer {
     public Peer(int id_, int maxConnections_, int unchokingInterval_,
                 int optimisticUnchokingInterval_, String fileName_,
                 long fileSize_, long pieceSize_, int welcomePort_, boolean hasFile_, Vector<NeighborInfo> neighborInfo)
-                throws IOException, InterruptedException, ClassNotFoundException {
+                throws Exception {
         this.id = id_;
         this.logObj = new Log(this.id);
         this.neighbors = new ArrayList<Neighbor>();
@@ -140,12 +140,22 @@ public class Peer {
         welcomeThread.join();
     }
 
-    private Socket fetchPort(Neighbor n) throws IOException, ClassNotFoundException {
+    private Socket fetchPort(Neighbor n) throws Exception {
+        System.out.println("Attempting to connect to neighbor " + n.id);
         Socket tempSocket = new Socket(n.address, n.welcomePort);
+        ObjectOutputStream out = new ObjectOutputStream(tempSocket.getOutputStream());
+        out.flush();
         ObjectInputStream in = new ObjectInputStream(tempSocket.getInputStream());
-        int portNumber = in.readInt();
+        out.writeObject("Hello");
+        out.flush();
+        System.out.println("Listening for port number from server...");
+        int portNumber = (int)in.readObject();
+        System.out.println("Received port number " + portNumber);
         tempSocket.close();
+        System.out.println("Closed temp socket, looking to connect to new port...");
         Socket newSocket = new Socket(n.address, portNumber);
+        System.out.println("Successfully connected to neighbor " + n.id + " on port " + portNumber);
+        handShakeClient(newSocket);
         if (numConnections < maxConnections) {
             this.unchokedNeighbors.add(n);
             numConnections++;
@@ -153,31 +163,40 @@ public class Peer {
         else {
             this.unchokedNeighbors.add(n);
         }
-        return new Socket(n.address,  portNumber);
+        return newSocket;
     }
 
     private void listenForNewNeighbor() throws Exception {
         try {
             while(listening) {
+                System.out.println("Listening for new neighbors...");
                 Socket connection = welcomeSocket.accept(); // welcome socket connection
+                System.out.println("New neighbor connected");
 
                 ServerSocket s = new ServerSocket(0);
-                int port = s.getLocalPort();
-                ObjectOutputStream out;
-                out = new ObjectOutputStream(connection.getOutputStream());
-                out.writeInt(port); // write port number through welcome socket connection
 
-                // Migrate neighbor to new connection off of the welcome socket
+                //Start listening on new server socket
                 Thread connectionThread = new Thread(() -> {
                     try {
                         this.makeNewConnection(s);
                     } catch (Exception e) {
                         e.printStackTrace();
                     }
-
                 });
                 connectionThread.start();
-                connectionThread.join(10000); // Allow 10 seconds for neighbor to connect
+
+                int port = s.getLocalPort();
+                ObjectOutputStream out = new ObjectOutputStream(connection.getOutputStream());
+                out.flush();
+                ObjectInputStream in = new ObjectInputStream(connection.getInputStream());
+                System.out.println("Waiting to read from client");
+                String message = (String)in.readObject();
+                System.out.println("received message " + message);
+                System.out.println("Sending port number " + port);
+                out.writeObject(port); // write port number through welcome socket connection
+                out.flush();
+                connectionThread.join();
+
                 //logObj.logConnectedFrom(this.id);
 
             }
@@ -188,10 +207,12 @@ public class Peer {
     }
 
     public void makeNewConnection (ServerSocket s) throws Exception {
+        System.out.println("In make new connection thread");
         s.setSoTimeout(10000);
         Socket connection;
         try {
             connection = s.accept();
+            System.out.println("Successfully accepted connection on new port");
         }
         catch(SocketTimeoutException e) {
             throw new SocketTimeoutException("Client socket failed to connect to new socket");
@@ -199,11 +220,13 @@ public class Peer {
             throw new IOException("IO Exception occurred while waiting for client to connect.");
         }
 
-        connection.setSoTimeout(0);
-        int id = handShake(connection);
+
+        System.out.println("Starting call to handshake");
+        int id = handShakeServer(connection);
         if (id == -1) {
             throw new Exception("Received invalid neighbor ID from handshake");
         }
+        System.out.println("Out of handshake");
 
         Neighbor n = new Neighbor(id, connection);
         logObj.logConnectedFrom(this.id, n.id);
@@ -215,10 +238,50 @@ public class Peer {
         else {
             this.chokedNeighbors.add(n);
         }
+        System.out.println("Starting call to create neighbor threads");
         createNeighborThreads(n);
+        System.out.println("Out of createNeighborThreads");
+    }
+
+    public int handShakeServer(Socket s) throws Exception {
+        // Project spec does not specify that a handshake ACK should come through
+        // Leaving it out for now.
+        ObjectOutputStream out = new ObjectOutputStream(s.getOutputStream());
+        out.flush();
+        ObjectInputStream in = new ObjectInputStream(s.getInputStream());
+        System.out.println("Waiting for client to send handshake...");
+        String response = (String)in.readObject();
+        int neighborId = Integer.parseInt(response.substring(28));
+        if (!response.substring(0,28).equals("P2PFILESHARINGPROJ" + "          ")) {
+            // Incorrect response from neighbor, need to handle
+            neighborId = -1;
+            throw new Exception("Received wrong connection message from client: " + response);
+        }
+        System.out.println("Response from peer: " + response);
+        System.out.println(neighborId);
+
+        System.out.println("Writing: " + "P2PFILESHARINGPROJ" + "          " + Integer.toString(this.id));
+        out.writeObject("P2PFILESHARINGPROJ" + "          " + Integer.toString(this.id));
+
+        return neighborId;
+    }
+
+    public void handShakeClient(Socket s) throws Exception {
+        ObjectOutputStream out = new ObjectOutputStream(s.getOutputStream());
+        out.flush();
+        ObjectInputStream in = new ObjectInputStream(s.getInputStream());
+        System.out.println("Writing: " + "P2PFILESHARINGPROJ" + "          " + Integer.toString(this.id));
+        out.writeObject("P2PFILESHARINGPROJ" + "          " + Integer.toString(this.id));
+        String response = (String)in.readObject();
+        if (!response.substring(0,28).equals("P2PFILESHARINGPROJ" + "          ")) {
+            // Incorrect response from neighbor, need to handle
+            throw new Exception("Received wrong connection message from client: " + response);
+        }
+        System.out.println("Response from peer: " + response);
     }
 
     public void createNeighborThreads(Neighbor n) throws InterruptedException {
+        System.out.println("In createNeighborThreads");
         n.requestThread = new Thread(() -> {
             try {
                 this.responder(n);
@@ -226,8 +289,8 @@ public class Peer {
                 e.printStackTrace();
             }
         });
+        System.out.println("Starting request thread");
         n.requestThread.start();
-        n.requestThread.join();
         n.initiatorThread = new Thread(() -> {
             try {
                 this.initiator(n);
@@ -235,24 +298,8 @@ public class Peer {
                 e.printStackTrace();
             }
         });
+        System.out.println("Starting initiator thread");
         n.initiatorThread.start();
-        n.initiatorThread.join();
-    }
-
-    public int handShake(Socket s) throws Exception {
-        // Project spec does not specify that a handshake ACK should come through
-        // Leaving it out for now.
-        ObjectOutputStream out = new ObjectOutputStream(s.getOutputStream());
-        ObjectInputStream in = new ObjectInputStream(s.getInputStream());
-        out.writeObject("P2PFILESHARINGPROJ" + "          " + Integer.toString(this.id));
-        String response = (String)in.readObject();
-        int neighborId = Integer.valueOf(response.substring(27));
-        if (response.substring(0,27) != ("P2PFILESHARINGPROJ" + "          ")) {
-            // Incorrect response from neighbor, need to handle
-            neighborId = -1;
-            throw new Exception("Received wrong connection message from client: " + response);
-        }
-        return neighborId;
     }
 
     // Thread for reading from neighbor connection
@@ -406,25 +453,28 @@ public class Peer {
 
     // Thread for starting message sends to neighbors (piece requests)
     public void initiator(Neighbor neighbor) throws IOException {
+        System.out.println("In initiator thread");
         OutputStream out = neighbor.connection.getOutputStream();
-        if (!neighbor.chokedByNeighbor) {
-            if (neighbor.interestedInNeighbor ) {
-                if (!neighbor.waitingForPiece) {
-                    //If we are not choked by the neighbor, neighbor has pieces we do not,
-                    // and we do not have an outstanding piece request to neighbor, find a piece to request
-                    int random = new Random().nextInt() % neighbor.piecesForPeer.size();
-                    int count = 0;
-                    int pieceNumber = 0;
-                    for (int iterator : neighbor.piecesForPeer) {
-                        if (count == random) {
-                            pieceNumber = iterator;
-                            break;
+        while(true) {
+            if (!neighbor.chokedByNeighbor) {
+                if (neighbor.interestedInNeighbor ) {
+                    if (!neighbor.waitingForPiece) {
+                        //If we are not choked by the neighbor, neighbor has pieces we do not,
+                        // and we do not have an outstanding piece request to neighbor, find a piece to request
+                        int random = new Random().nextInt() % neighbor.piecesForPeer.size();
+                        int count = 0;
+                        int pieceNumber = 0;
+                        for (int iterator : neighbor.piecesForPeer) {
+                            if (count == random) {
+                                pieceNumber = iterator;
+                                break;
+                            }
+                            count++;
                         }
-                        count++;
+                        byte[] pieceNumberBytes = intToFourBytes(pieceNumber);
+                        sendMessage(MessageType.REQUEST, neighbor, pieceNumberBytes);
+                        neighbor.waitingForPiece = true;
                     }
-                    byte[] pieceNumberBytes = intToFourBytes(pieceNumber);
-                    sendMessage(MessageType.REQUEST, neighbor, pieceNumberBytes);
-                    neighbor.waitingForPiece = true;
                 }
             }
         }
