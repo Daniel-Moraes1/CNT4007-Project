@@ -293,7 +293,7 @@ public class Peer {
         InputStream in = neighbor.connection.getInputStream();
         while(listening) {
             byte[] lengthBytes = in.readNBytes(4); // Wait for message to come in
-            int messageLength = fourBytesToInt(lengthBytes);
+            int messageLength = Util.fourBytesToInt(lengthBytes);
 
             int type = in.read();
             switch(type) {
@@ -335,7 +335,7 @@ public class Peer {
                 case 4:
                     byte[] byteIndex = in.readNBytes(4);
 
-                    int index = fourBytesToInt(byteIndex);
+                    int index = Util.fourBytesToInt(byteIndex);
 
                     if (!neighbor.bitfield.get(index)) {
                         neighbor.bitfield.set(index, true);
@@ -382,7 +382,10 @@ public class Peer {
                 // Request
                 case 6:
                     byte[] requestIndexBytes = in.readNBytes(4);
-                    int requestedIndex = fourBytesToInt(requestIndexBytes);
+                    if (Util.fourBytesToInt(requestIndexBytes) > 128) {
+                        int x=5;
+                    }
+                    int requestedIndex = Util.fourBytesToInt(requestIndexBytes);
                     if (unchokedNeighbors.contains(neighbor)) {
                         sendMessage(MessageType.PIECE, neighbor, p2pFile.getPiece(requestedIndex));
                         neighbor.piecesInInterval++;
@@ -400,11 +403,12 @@ public class Peer {
                 case 7:
                     // The first four bytes of a piece payload is the index
                     byte[] pieceIndexBytes = in.readNBytes(4);
-                    int pieceIndex = fourBytesToInt(pieceIndexBytes);
+                    int pieceIndex = Util.fourBytesToInt(pieceIndexBytes);
                     System.out.println("Received piece " + pieceIndex);
                     if (messageLength == 5) {
-                        // We were choked by the neighbor and the piece was not sent over
+                        // Piece was not sent over (neighbor does not have or we have been choked)
                         requested.set(pieceIndex, false);
+
                     }
                     else {
                         byte[] pieceData = in.readNBytes(messageLength-1-4);
@@ -432,9 +436,9 @@ public class Peer {
                                 }
                             }
                         }
-                        neighbor.waitingForPiece = false;
-                    }
 
+                    }
+                    neighbor.waitingForPiece = false;
                     break;
             }
         }
@@ -460,7 +464,10 @@ public class Peer {
                             }
                             count++;
                         }
-                        byte[] pieceNumberBytes = intToFourBytes(pieceNumber);
+                        if (pieceNumber > 128) {
+                            int x = 5;
+                        }
+                        byte[] pieceNumberBytes = Util.intToFourBytes(pieceNumber);
                         sendMessage(MessageType.REQUEST, neighbor, pieceNumberBytes);
                         System.out.println("Sent piece request for piece " + pieceNumber);
                         neighbor.waitingForPiece = true;
@@ -505,7 +512,7 @@ public class Peer {
         }
         Collections.sort(interestedInPeer, new SortByDownloadRate());
         Vector<Neighbor> toUnchoke = new Vector<Neighbor>();
-        for (int i=0 ; i<interestedInPeer.size()-1; i++) {
+        for (int i=0; i<interestedInPeer.size()-1; i++) {
             if (toUnchoke.size() == maxConnections) {
                 break;
             }
@@ -544,6 +551,7 @@ public class Peer {
                 this.chokedNeighbors.add(n);
                 logObj.logChoked(this.id,n.id);
                 sendMessage(MessageType.CHOKE, n, null);
+                System.out.println("Choking neighbor " + n.id);
             }
         }
 
@@ -582,6 +590,8 @@ public class Peer {
             optimisticUnchokedNeighbor = interested.get(random);
             unchokedNeighbors.add(interested.get(random));
             chokedNeighbors.remove(interested.get(random));
+            sendMessage(MessageType.UNCHOKE, interested.get(random), null);
+            System.out.println("Optimistically unchoking neighbor " + interested.get(random).id);
         }
         else if (optimisticUnchokedNeighbor != null) {
             // not sure if we need to log if same optimistically unchoked neighbor is reselected
@@ -592,7 +602,7 @@ public class Peer {
     private void sendMessage(MessageType messageType, Neighbor n, byte[] message) throws IOException {
         OutputStream out = n.connection.getOutputStream();
         int messageLength = message != null ? message.length + 1 : 1;
-        byte[] messageLengthBytes = intToFourBytes(messageLength);
+        byte[] messageLengthBytes = Util.intToFourBytes(messageLength);
         byte type = -1;
         switch(messageType) {
             case CHOKE:
@@ -630,41 +640,6 @@ public class Peer {
         out.write(fullMessage);
     }
 
-    public int fourBytesToInt(byte[] bytes) {
-        int sum = 0;
-        for (byte b: bytes) {
-            sum = (sum << 8) + b;
-        }
-        return sum;
-    }
-
-    public byte[] intToFourBytes(int num) {
-        return new byte[]{
-                (byte) (num >> 24),
-                (byte) (num >> 16),
-                (byte) (num >> 8),
-                (byte) num
-        };
-    }
-
-    //Bytes come in as little-endian
-    public BitSet bytesToBitSet(byte[] bytes) {
-        BitSet bitSet = new BitSet();
-        for (int i=0; i<bytes.length; i++) {
-            for (int j=0; j<8; j++) {
-                if ((bytes[i] & 1) > 0) {
-                    if (i*8+j >= totalPieces) {
-                        continue;
-                    }
-                    bitSet.set(i*8+j);
-                }
-                bytes[i] = (byte)(bytes[i] >> 0x1);
-            }
-        }
-        return bitSet;
-    }
-
-
     private boolean checkInterestInNeighbor(Neighbor neighbor) {
         neighbor.interestedInNeighbor = !neighbor.piecesForPeer.isEmpty();
         return neighbor.interestedInNeighbor;
@@ -682,6 +657,23 @@ public class Peer {
         public int compare(Neighbor a, Neighbor b) {
             return a.piecesInInterval - b.piecesInInterval;
         }
+    }
+
+    //Bytes come in as little-endian
+    public BitSet bytesToBitSet(byte[] bytes) {
+        BitSet bitSet = new BitSet();
+        for (int i=0; i<bytes.length; i++) {
+            for (int j=0; j<8; j++) {
+                if ((bytes[i] & 1) > 0) {
+                    if (i*8+j >= totalPieces) {
+                        continue;
+                    }
+                    bitSet.set(i*8+j);
+                }
+                bytes[i] = (byte)(bytes[i] >> 0x1);
+            }
+        }
+        return bitSet;
     }
 
     public static void main(String[] args) throws Exception {

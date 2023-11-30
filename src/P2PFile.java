@@ -68,7 +68,16 @@ public class P2PFile {
 
 
     public byte[] getPiece(int pieceIndex) {
-        return pieces.get(pieceIndex);
+        byte[] piece = pieces.get(pieceIndex);
+        if (piece == null) {
+            System.out.println("Piece " + pieceIndex + " was requested from this machine but we do not have it. This should not happen");
+            return Util.intToFourBytes(pieceIndex); // Returning just the piece index
+        }
+        byte[] fullMessage = new byte[4 + piece.length];
+        byte[] byteIndex = Util.intToFourBytes(pieceIndex);
+        System.arraycopy(byteIndex, 0, fullMessage, 0, 4);
+        System.arraycopy(piece, 0, fullMessage, 4, 4);
+        return fullMessage;
     }
 
     public boolean hasPiece(int pieceIndex) {
