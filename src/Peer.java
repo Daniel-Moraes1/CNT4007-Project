@@ -454,7 +454,7 @@ public class Peer {
                     if (!neighbor.waitingForPiece) {
                         //If we are not choked by the neighbor, neighbor has pieces we do not,
                         // and we do not have an outstanding piece request to neighbor, find a piece to request
-                        int random = new Random().nextInt() % neighbor.piecesForPeer.size();
+                        int random = new Random().nextInt(neighbor.piecesForPeer.size());
                         int count = 0;
                         int pieceNumber = 0;
                         for (int iterator : neighbor.piecesForPeer) {
