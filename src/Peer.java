@@ -15,7 +15,7 @@ public class Peer {
     private volatile HashSet <Neighbor> unchokedNeighbors;
     private volatile HashSet <Neighbor> chokedNeighbors;
     private volatile int countFinishedNeighbors;
-    private volatile int numConnections;
+    private volatile int numNeighbors;
     private int maxConnections;
     private volatile int unchokeInterval;
     private int optimisticUnchokeInterval;
@@ -71,7 +71,7 @@ public class Peer {
         }
     }
 
-    public Peer(int id_, int maxConnections_, int unchokingInterval_,
+    public Peer(int id_, int numNeighbors, int maxConnections_, int unchokingInterval_,
                 int optimisticUnchokingInterval_, String fileName_,
                 long fileSize_, long pieceSize_, int welcomePort_, boolean hasFile_, Vector<NeighborInfo> neighborInfo)
                 throws Exception {
@@ -448,7 +448,7 @@ public class Peer {
                     if (!neighbor.waitingForPiece) {
                         //If we are not choked by the neighbor, neighbor has pieces we do not,
                         // and we do not have an outstanding piece request to neighbor, find a piece to request
-                        int random = new Random().nextInt() % neighbor.piecesForPeer.size();
+                        int random = new Random().nextInt(neighbor.piecesForPeer.size());
                         int count = 0;
                         int pieceNumber = 0;
                         for (int iterator : neighbor.piecesForPeer) {
@@ -457,9 +457,6 @@ public class Peer {
                                 break;
                             }
                             count++;
-                        }
-                        if (pieceNumber > 128) {
-                            int x = 5;
                         }
                         byte[] pieceNumberBytes = Util.intToFourBytes(pieceNumber);
                         sendMessage(MessageType.REQUEST, neighbor, pieceNumberBytes);
@@ -641,8 +638,9 @@ public class Peer {
 
     // If all neighbors and self is done, end all connections with Peer
     private void checkDone() {
-        if (this.countFinishedNeighbors == neighbors.size() && this.finished) {
+        if (this.countFinishedNeighbors == numNeighbors && this.finished) {
             listening = false;
+            System.out.println("All neighbors are finished, terminating and ending all threads");
         }
     }
 
@@ -709,18 +707,20 @@ public class Peer {
             throw new Exception("Failed to open Common.cfg");
         }*/
         int count = 0;
+        boolean found = false;
         NeighborInfo peerInfo = new NeighborInfo(-1, "-1", -1, -1);
         try {// Store all neighbor information up to the peer running this program. Will need to pass this into peer construction
             File peerNeighborInfo = new File("./Config/PeerInfo.cfg");
             scanner = new Scanner(peerNeighborInfo);
             while (scanner.hasNextLine()) {
                 line = scanner.nextLine();
+                if (found) continue;
                 String[] columnSections = line.split(" ");
                 if (columnSections.length == 4) {
                     int neighborID = Integer.parseInt(columnSections[0]);
                     if (neighborID == id) {
                         peerInfo = new NeighborInfo(neighborID, columnSections[1], Integer.parseInt(columnSections[2]), Integer.parseInt(columnSections[3]));
-                        break;
+                        found = true;
                     }
                     else {
                         peerNeighborInfoFromConfig.addElement(new NeighborInfo(neighborID, columnSections[1], Integer.parseInt(columnSections[2]), Integer.parseInt(columnSections[3])));
@@ -737,7 +737,8 @@ public class Peer {
             throw new Exception("invalid ID");
         }
 
-        Peer peer = new Peer(peerInfo.id,
+
+        Peer peer = new Peer(peerInfo.id, count-1,
                 numPreferredNeighbors,unChokingInterval,optimisticUnChokingInterval,fileName,
                 fileSize,pieceSize,peerInfo.port,
                peerInfo.hasFile, peerNeighborInfoFromConfig);
