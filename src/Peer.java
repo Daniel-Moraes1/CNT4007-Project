@@ -1,14 +1,9 @@
 package src;
 
 import java.io.*;
-import java.util.HashSet;
-import java.util.Random;
-import java.util.Vector;
-import java.lang.System;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
-import java.nio.file.Files;
 import java.util.*;
 
 public class Peer {
@@ -105,7 +100,7 @@ public class Peer {
             this.numPieces = totalPieces;
             this.finished = true;
         }
-        this.p2pFile = new P2PFile(fileName_, fileSize, pieceSize);
+        this.p2pFile = new P2PFile(fileName_, fileSize, pieceSize,hasFile_);
 
 
         connectToNeighbors(neighborInfo);
@@ -191,7 +186,6 @@ public class Peer {
                 connectionThread.join();
 
                 //logObj.logConnectedFrom(this.id);
-
             }
         }
         catch(Exception e) {

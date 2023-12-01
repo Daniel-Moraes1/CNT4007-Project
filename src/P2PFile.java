@@ -1,24 +1,27 @@
 package src;
-import java.io.*;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.util.BitSet;
 import java.util.HashMap;
-import java.util.Map;
 
 public class P2PFile {
 
     private final String filePath;
     private final long pieceSize;
     private final long fileSize;
-    private final Map<Integer, byte[]> pieces;
+    private final HashMap<Integer, byte[]> pieces;
     private final BitSet pieceAvailability;
 
-    public P2PFile(String filePath, long fileSize, long pieceSize) throws IOException {
+    public P2PFile(String filePath, long fileSize, long pieceSize, boolean hasFile) throws IOException {
         this.filePath = filePath;
         this.fileSize = fileSize;
         this.pieceSize = pieceSize;
-        this.pieces = new HashMap<>();
         this.pieceAvailability = new BitSet();
-        initializeFilePieces();
+        this.pieces = new HashMap<Integer,byte[]>();
+        if(hasFile) initializeFilePieces();
     }
 
     //Used when the file does not exist on local machine initially

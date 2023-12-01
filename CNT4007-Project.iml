@@ -10,16 +10,7 @@
     <orderEntry type="module-library">
       <library>
         <CLASSES>
-          <root url="jar://$MODULE_DIR$/P2PNet.jar!/" />
-        </CLASSES>
-        <JAVADOC />
-        <SOURCES />
-      </library>
-    </orderEntry>
-    <orderEntry type="module-library">
-      <library>
-        <CLASSES>
-          <root url="jar://$MODULE_DIR$/jsch-0.1.54.jar!/" />
+          <root url="jar://$USER_HOME$/Downloads/jsch-0.1.54.jar!/" />
         </CLASSES>
         <JAVADOC />
         <SOURCES />
