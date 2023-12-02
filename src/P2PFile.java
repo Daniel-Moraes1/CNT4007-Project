@@ -81,7 +81,7 @@ public class P2PFile {
         byte[] fullMessage = new byte[4 + piece.length];
         byte[] byteIndex = Util.intToFourBytes(pieceIndex);
         System.arraycopy(byteIndex, 0, fullMessage, 0, 4);
-        System.arraycopy(piece, 0, fullMessage, 4, 4);
+        System.arraycopy(piece, 0, fullMessage, 4, piece.length);
         return fullMessage;
     }
 

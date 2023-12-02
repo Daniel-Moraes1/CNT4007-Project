@@ -7,8 +7,8 @@ public class Util {
     static public int fourBytesToInt(byte[] bytes) {
         int sum = 0;
         for (byte b: bytes) {
-            int x = b & 0xff;
-            sum = (sum << 8) + b&0xff;
+
+            sum = (sum << 8) + (b&0xff);
         }
         return sum;
     }

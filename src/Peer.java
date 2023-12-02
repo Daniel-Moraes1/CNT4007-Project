@@ -100,7 +100,7 @@ public class Peer {
             this.numPieces = totalPieces;
             this.finished = true;
         }
-        this.p2pFile = new P2PFile(fileName_, fileSize, pieceSize,hasFile_);
+        this.p2pFile = new P2PFile("Config/" + id + "/" + fileName_, fileSize, pieceSize,hasFile_);
 
 
         connectToNeighbors(neighborInfo);
@@ -376,10 +376,8 @@ public class Peer {
                 // Request
                 case 6:
                     byte[] requestIndexBytes = in.readNBytes(4);
-                    if (Util.fourBytesToInt(requestIndexBytes) > 128) {
-                        int x=5;
-                    }
                     int requestedIndex = Util.fourBytesToInt(requestIndexBytes);
+                    System.out.println("Received request for piece " + requestedIndex);
                     if (unchokedNeighbors.contains(neighbor)) {
                         sendMessage(MessageType.PIECE, neighbor, p2pFile.getPiece(requestedIndex));
                         neighbor.piecesInInterval++;
@@ -405,7 +403,7 @@ public class Peer {
 
                     }
                     else {
-                        byte[] pieceData = in.readNBytes(messageLength-1-4);
+                        byte[] pieceData = in.readNBytes(messageLength-5);
                         p2pFile.writePiece(pieceIndex, pieceData);
                         if (!this.bitfield.get(pieceIndex)) {
                             this.bitfield.set(pieceIndex, true);
@@ -627,8 +625,9 @@ public class Peer {
         if (message != null) {
             System.arraycopy(message, 0, fullMessage, 5, message.length);
         }
-        System.out.println("Sending message " + fullMessage);
+        System.out.println("Sending message type" + type);
         out.write(fullMessage);
+        out.flush();
     }
 
     private boolean checkInterestInNeighbor(Neighbor neighbor) {
