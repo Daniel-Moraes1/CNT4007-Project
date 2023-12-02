@@ -5,6 +5,8 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
 import java.util.*;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class Peer {
 
@@ -33,8 +35,8 @@ public class Peer {
     private volatile long lastUnchoke;
     private volatile long lastOptimisticUnchoke;
     public volatile Neighbor optimisticUnchokedNeighbor;
-
     public Log logObj;
+    public Lock chokeLock;
 
     public class Neighbor {
         public volatile int id;
@@ -53,6 +55,8 @@ public class Peer {
         public volatile int piecesInInterval;
         public volatile Thread requestThread;
         public volatile Thread initiatorThread;
+        public Lock writeLock;
+        public Lock piecesForPeerLock;
 
         public Neighbor(int id, Socket connection_) throws IOException, ClassNotFoundException {
             this.id = id;
@@ -68,6 +72,8 @@ public class Peer {
             this.waitingForPiece = false;
             this.piecesInInterval = 0;
             this.numPieces = 0;
+            this.writeLock = new ReentrantLock();
+            this.piecesForPeerLock = new ReentrantLock();
         }
     }
 
@@ -100,9 +106,9 @@ public class Peer {
             this.numPieces = totalPieces;
             this.finished = true;
         }
+        this.chokeLock = new ReentrantLock();
+
         this.p2pFile = new P2PFile("Config/" + id + "/" + fileName_, fileSize, pieceSize,hasFile_);
-
-
         connectToNeighbors(neighborInfo);
         createWelcomeThread();
         createTimerThread();
@@ -124,7 +130,12 @@ public class Peer {
         handShakeClient(newSocket);
         Neighbor n = new Neighbor(neighborInfo.id, newSocket);
         this.neighbors.add(n);
-        this.chokedNeighbors.add(n);
+        chokeLock.lock();
+        try {
+            this.chokedNeighbors.add(n);
+        } finally {
+            chokeLock.unlock();
+        }
         createNeighborThreads(n);
         sendBitfield(n);
         return newSocket;
@@ -150,7 +161,12 @@ public class Peer {
         Neighbor n = new Neighbor(id, connection);
         logObj.logConnectedFrom(this.id, n.id);
         neighbors.add(n);
-        this.chokedNeighbors.add(n);
+        chokeLock.lock();
+        try {
+            this.chokedNeighbors.add(n);
+        } finally {
+            chokeLock.unlock();
+        }
         System.out.println("Starting call to create neighbor threads");
         createNeighborThreads(n);
         System.out.println("Out of createNeighborThreads");
@@ -339,7 +355,12 @@ public class Peer {
                         }
                     }
                     if (!this.bitfield.get(index)) {
-                        neighbor.piecesForPeer.add(index);
+                        neighbor.piecesForPeerLock.lock();
+                        try {
+                            neighbor.piecesForPeer.add(index);
+                        } finally {
+                            neighbor.piecesForPeerLock.unlock();
+                        }
                         sendMessage(MessageType.INTERESTED, neighbor, null);
                     }
                     break;
@@ -348,14 +369,21 @@ public class Peer {
                 case 5:
                     byte[] bitfieldBytes = in.readNBytes(messageLength-1);
                     neighbor.bitfield = bytesToBitSet(bitfieldBytes);
-                    for (int i=0; i<neighbor.bitfield.size(); i++) {
-                        if (neighbor.bitfield.get(i)) {
-                            neighbor.numPieces++;
-                            if (!this.bitfield.get(i)) {
-                                neighbor.piecesForPeer.add(i);
+                    neighbor.piecesForPeerLock.lock();
+                    try {
+                        for (int i=0; i<neighbor.bitfield.size(); i++) {
+                            if (neighbor.bitfield.get(i)) {
+                                neighbor.numPieces++;
+                                if (!this.bitfield.get(i)) {
+                                    neighbor.piecesForPeer.add(i);
+                                }
                             }
                         }
+                    } finally {
+                        neighbor.piecesForPeerLock.unlock();
                     }
+
+
                     if (neighbor.numPieces == totalPieces) {
                         neighbor.finished = true;
                     }
@@ -397,10 +425,10 @@ public class Peer {
                     byte[] pieceIndexBytes = in.readNBytes(4);
                     int pieceIndex = Util.fourBytesToInt(pieceIndexBytes);
                     System.out.println("Received piece " + pieceIndex);
+                    requested.set(pieceIndex, false);
                     if (messageLength == 5) {
                         // Piece was not sent over (neighbor does not have or we have been choked)
-                        requested.set(pieceIndex, false);
-
+                        break;
                     }
                     else {
                         byte[] pieceData = in.readNBytes(messageLength-5);
@@ -420,15 +448,19 @@ public class Peer {
 
                             // Upon receiving a new packet, remove packet index for set of packets that neighbors have and peer does not
                             // If set of missing packets that a neighbor has becomes 0, send NOT_INTERESTED
-                            if (neighbors.get(i).piecesForPeer.contains(pieceIndex)) {
-                                neighbors.get(i).piecesForPeer.remove(pieceIndex);
-                                if (!checkInterestInNeighbor(neighbors.get(i))) {
-                                    logObj.logReceivedNotInterested(this.id,neighbors.get(i).id);
-                                    sendMessage(MessageType.NOT_INTERESTED, neighbor, null);
+                            neighbors.get(i).piecesForPeerLock.lock();
+                            try {
+                                if (neighbors.get(i).piecesForPeer.contains(pieceIndex)) {
+                                    neighbors.get(i).piecesForPeer.remove(pieceIndex);
+                                    if (!checkInterestInNeighbor(neighbors.get(i))) {
+                                        logObj.logReceivedNotInterested(this.id,neighbors.get(i).id);
+                                        sendMessage(MessageType.NOT_INTERESTED, neighbor, null);
+                                    }
                                 }
+                            } finally {
+                                neighbors.get(i).piecesForPeerLock.unlock();
                             }
                         }
-
                     }
                     neighbor.waitingForPiece = false;
                     break;
@@ -446,15 +478,24 @@ public class Peer {
                     if (!neighbor.waitingForPiece) {
                         //If we are not choked by the neighbor, neighbor has pieces we do not,
                         // and we do not have an outstanding piece request to neighbor, find a piece to request
-                        int random = new Random().nextInt(neighbor.piecesForPeer.size());
-                        int count = 0;
-                        int pieceNumber = 0;
-                        for (int iterator : neighbor.piecesForPeer) {
-                            if (count == random) {
-                                pieceNumber = iterator;
-                                break;
+                        neighbor.piecesForPeerLock.lock();
+                        int pieceNumber = -1;
+                        try {
+                            int random = new Random().nextInt(neighbor.piecesForPeer.size());
+                            int count = 0;
+                            pieceNumber = 0;
+                            for (int iterator : neighbor.piecesForPeer) {
+                                if (count == random) {
+                                    pieceNumber = iterator;
+                                    break;
+                                }
+                                count++;
                             }
-                            count++;
+                            if (requested.get(pieceNumber)) {
+                                continue; // Don't request the same piece twice
+                            }
+                        } finally {
+                            neighbor.piecesForPeerLock.unlock();
                         }
                         byte[] pieceNumberBytes = Util.intToFourBytes(pieceNumber);
                         sendMessage(MessageType.REQUEST, neighbor, pieceNumberBytes);
@@ -534,29 +575,34 @@ public class Peer {
         }
 
         // If an unchoked neighbor is not reselected to be unchoked
-        for (Neighbor n : unchokedNeighbors) {
-            if (!toUnchoke.contains(n) && this.optimisticUnchokedNeighbor != n) {
-                this.unchokedNeighbors.remove(n);
-                this.chokedNeighbors.add(n);
-                logObj.logChoked(this.id,n.id);
-                sendMessage(MessageType.CHOKE, n, null);
-                System.out.println("Choking neighbor " + n.id);
+        chokeLock.lock();
+        try {
+            for (Neighbor n : unchokedNeighbors) {
+                if (!toUnchoke.contains(n) && this.optimisticUnchokedNeighbor != n) {
+                    this.unchokedNeighbors.remove(n);
+                    this.chokedNeighbors.add(n);
+                    logObj.logChoked(this.id,n.id);
+                    sendMessage(MessageType.CHOKE, n, null);
+                    System.out.println("Choking neighbor " + n.id);
+                }
             }
+
+            for (int i=0; i<toUnchoke.size(); i++) {
+                if (chokedNeighbors.contains(neighbors.get(i))) {
+                    chokedNeighbors.remove(neighbors.get(i));
+                    unchokedNeighbors.add(neighbors.get(i));
+                    logObj.logUnchoked(this.id,neighbors.get(i).id);
+                    sendMessage(MessageType.UNCHOKE, neighbors.get(i), null);
+                    System.out.println("Unchoked neighbor " + neighbors.get(i).id);
+                }
+                if (neighbors.get(i) == this.optimisticUnchokedNeighbor) {
+                    this.optimisticUnchokedNeighbor = null;
+                }
+            }
+        } finally {
+            chokeLock.unlock();
         }
 
-        for (int i=0; i<toUnchoke.size(); i++) {
-            if (chokedNeighbors.contains(neighbors.get(i))) {
-                chokedNeighbors.remove(neighbors.get(i));
-                unchokedNeighbors.add(neighbors.get(i));
-                logObj.logUnchoked(this.id,neighbors.get(i).id);
-                sendMessage(MessageType.UNCHOKE, neighbors.get(i), null);
-                System.out.println("Unchoked neighbor " + neighbors.get(i).id);
-            }
-            if (neighbors.get(i) == this.optimisticUnchokedNeighbor) {
-                // TODO should we automatically reassign an optimistic unchoked neighbor if we promote one to preferred?
-                this.optimisticUnchokedNeighbor = null;
-            }
-        }
         // Reset pieces downloaded in interval for all neighbors
         for (int i=0; i<neighbors.size(); i++) {
             neighbors.get(i).piecesInInterval = 0;
@@ -564,21 +610,32 @@ public class Peer {
     }
     private void optimisticUnchoke() throws IOException {
         Vector<Neighbor> interested = new Vector<Neighbor>();
-        for (Neighbor n : chokedNeighbors) {
-            if (n.interestedInPeer) {
-                interested.add(n);
+        chokeLock.lock();
+        try {
+            for (Neighbor n : chokedNeighbors) {
+                if (n.interestedInPeer) {
+                    interested.add(n);
+                }
             }
+        } finally {
+            chokeLock.unlock();
         }
+
         if (interested.size() != 0) {
             int random = new Random().nextInt()%interested.size();
-            if (optimisticUnchokedNeighbor != null) {
-                unchokedNeighbors.remove(optimisticUnchokedNeighbor);
-                chokedNeighbors.add(optimisticUnchokedNeighbor);
-                logObj.logOptimisticallyUnchokedNeighbor(this.id,optimisticUnchokedNeighbor.id);
+            chokeLock.lock();
+            try {
+                if (optimisticUnchokedNeighbor != null) {
+                    unchokedNeighbors.remove(optimisticUnchokedNeighbor);
+                    chokedNeighbors.add(optimisticUnchokedNeighbor);
+                    logObj.logOptimisticallyUnchokedNeighbor(this.id,optimisticUnchokedNeighbor.id);
+                }
+                optimisticUnchokedNeighbor = interested.get(random);
+                unchokedNeighbors.add(interested.get(random));
+                chokedNeighbors.remove(interested.get(random));
+            } finally {
+                chokeLock.unlock();
             }
-            optimisticUnchokedNeighbor = interested.get(random);
-            unchokedNeighbors.add(interested.get(random));
-            chokedNeighbors.remove(interested.get(random));
             sendMessage(MessageType.UNCHOKE, interested.get(random), null);
             System.out.println("Optimistically unchoking neighbor " + interested.get(random).id);
         }
@@ -625,13 +682,24 @@ public class Peer {
         if (message != null) {
             System.arraycopy(message, 0, fullMessage, 5, message.length);
         }
-        System.out.println("Sending message type" + type);
-        out.write(fullMessage);
-        out.flush();
+
+        n.writeLock.lock();
+        try {
+            System.out.println("Sending message type " + type);
+            out.write(fullMessage);
+            out.flush();
+        } finally {
+            n.writeLock.unlock();
+        }
     }
 
     private boolean checkInterestInNeighbor(Neighbor neighbor) {
-        neighbor.interestedInNeighbor = !neighbor.piecesForPeer.isEmpty();
+        neighbor.piecesForPeerLock.lock();
+        try {
+            neighbor.interestedInNeighbor = !neighbor.piecesForPeer.isEmpty();
+        } finally {
+            neighbor.piecesForPeerLock.unlock();
+        }
         return neighbor.interestedInNeighbor;
     }
 
@@ -680,7 +748,7 @@ public class Peer {
         } catch (Exception e) {
             System.out.println("Invalid input ID");
         }
-        //try { // Read config info from common.
+        try { // Read config info from common.
             File common = new File("./Config/Common.cfg");
             scanner = new Scanner(common);
             String line = scanner.nextLine();
@@ -702,15 +770,16 @@ public class Peer {
             information = line.split(" ");
             pieceSize = Integer.parseInt(information[1]);
             scanner.close();
-        /*} catch (Exception e) {
+        } catch (Exception e) {
             throw new Exception("Failed to open Common.cfg");
-        }*/
+        }
         int count = 0;
         boolean found = false;
         NeighborInfo peerInfo = new NeighborInfo(-1, "-1", -1, -1);
         try {// Store all neighbor information up to the peer running this program. Will need to pass this into peer construction
             File peerNeighborInfo = new File("./Config/PeerInfo.cfg");
             scanner = new Scanner(peerNeighborInfo);
+            String line;
             while (scanner.hasNextLine()) {
                 line = scanner.nextLine();
                 if (found) continue;
