@@ -4,6 +4,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.util.Arrays;
 import java.util.BitSet;
 import java.util.HashMap;
 
@@ -44,9 +45,10 @@ public class P2PFile {
         try (FileInputStream fileInputStream = new FileInputStream(filePath)) {
             int index = 0;
             byte[] temp = new byte[(int)pieceSize];
-
-            while (fileInputStream.read(temp) != -1) {
-                pieces.put(index, temp);
+            int bytesRead;
+            while ((bytesRead = fileInputStream.read(temp)) != -1) {
+                byte[] actualData = Arrays.copyOf(temp, bytesRead);
+                pieces.put(index, actualData);
                 pieceAvailability.set(index);
                 temp = new byte[(int)pieceSize];
                 index++;
