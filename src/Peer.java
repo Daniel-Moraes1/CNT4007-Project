@@ -532,82 +532,53 @@ public class Peer {
 
     private void unchoke() throws IOException {
         // Find peers with greatest download rates
-        // We can just sort for now, but not best TC
         Vector<Neighbor> interestedInPeer = new Vector<Neighbor>();
-        for (int i=0; i<neighbors.size(); i++) {
-            if (neighbors.get(i).interestedInPeer) {
-                interestedInPeer.add(neighbors.get(i));
-                logObj.logReceivedInterested(this.id, neighbors.get(i).id);
-            }
-        }
-        Collections.sort(interestedInPeer, new SortByDownloadRate());
-        Vector<Neighbor> toUnchoke = new Vector<Neighbor>();
-        for (int i=0; i<interestedInPeer.size()-1; i++) {
-            if (toUnchoke.size() == maxConnections) {
-                break;
-            }
-            if (interestedInPeer.get(i).piecesInInterval > interestedInPeer.get(i+1).piecesInInterval) {
-                toUnchoke.add(interestedInPeer.get(i));
-            }
-            else if (interestedInPeer.get(i).piecesInInterval == interestedInPeer.get(i+1).piecesInInterval) {
-                Vector<Neighbor> tie = new Vector<Neighbor>();
-                while (i < interestedInPeer.size()-1 && interestedInPeer.get(i).piecesInInterval == interestedInPeer.get(i+1).piecesInInterval) {
-                    tie.add(neighbors.get(i));
-                    i++;
-                }
-                tie.add(neighbors.get(i));
 
-                if (tie.size() <= maxConnections - toUnchoke.size()) {
-                    for (int j=0; j<tie.size(); j++) {
-                        toUnchoke.add(tie.get(j));
-                    }
-                }
-                else {
-                    // Randomly select preferred neighbors among tied peers
-                    Random random = new Random();
-                    while (toUnchoke.size() < maxConnections) {
-                        int index = new Random().nextInt() % tie.size();
-                        toUnchoke.add(tie.get(index));
-                        tie.remove(index);
-                    }
-                }
-            }
-        }
-
-        // If an unchoked neighbor is not reselected to be unchoked
         chokeLock.lock();
         try {
+            for (Neighbor n : neighbors) {
+                if (n.interestedInPeer) {
+                    interestedInPeer.add(n);
+                }
+            }
+
+            Collections.sort(interestedInPeer, new SortByDownloadRate());
+            Vector<Neighbor> toUnchoke = new Vector<Neighbor>();
+            for (int i = 0; i < Math.min(interestedInPeer.size(), maxConnections); i++) {
+                toUnchoke.add(interestedInPeer.get(i));
+            }
+
+            // Unchoke and choke neighbors based on the new list
             for (Neighbor n : unchokedNeighbors) {
                 if (!toUnchoke.contains(n) && this.optimisticUnchokedNeighbor != n) {
-                    this.unchokedNeighbors.remove(n);
-                    this.chokedNeighbors.add(n);
-                    logObj.logChoked(this.id,n.id);
                     sendMessage(MessageType.CHOKE, n, null);
                     System.out.println("Choking neighbor " + n.id);
                 }
             }
 
-            for (int i=0; i<toUnchoke.size(); i++) {
-                if (chokedNeighbors.contains(neighbors.get(i))) {
-                    chokedNeighbors.remove(neighbors.get(i));
-                    unchokedNeighbors.add(neighbors.get(i));
-                    logObj.logUnchoked(this.id,neighbors.get(i).id);
-                    sendMessage(MessageType.UNCHOKE, neighbors.get(i), null);
-                    System.out.println("Unchoked neighbor " + neighbors.get(i).id);
-                }
-                if (neighbors.get(i) == this.optimisticUnchokedNeighbor) {
-                    this.optimisticUnchokedNeighbor = null;
+            for (Neighbor n : toUnchoke) {
+                if (!unchokedNeighbors.contains(n)) {
+                    sendMessage(MessageType.UNCHOKE, n, null);
+                    System.out.println("Unchoking neighbor " + n.id);
                 }
             }
+
+            // Update the sets of unchoked and choked neighbors
+            unchokedNeighbors.clear();
+            unchokedNeighbors.addAll(toUnchoke);
+            chokedNeighbors.removeAll(toUnchoke);
+            chokedNeighbors.addAll(neighbors);
+            chokedNeighbors.removeAll(unchokedNeighbors);
         } finally {
             chokeLock.unlock();
         }
 
         // Reset pieces downloaded in interval for all neighbors
-        for (int i=0; i<neighbors.size(); i++) {
-            neighbors.get(i).piecesInInterval = 0;
+        for (Neighbor n : neighbors) {
+            n.piecesInInterval = 0;
         }
     }
+
     private void optimisticUnchoke() throws IOException {
         Vector<Neighbor> interested = new Vector<Neighbor>();
         chokeLock.lock();
