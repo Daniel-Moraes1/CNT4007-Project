@@ -20,11 +20,13 @@ public class Log {
     }
 
     private synchronized void makeLog(String message) throws IOException {
-        try (FileWriter writer = new FileWriter(path, true)) {
-            writer.write("[" + timeNow() + "]: " + message + "\n");
-        } catch (IOException e) {
-            throw new IOException("Failed to write to log!");
-        }
+            try (FileWriter writer = new FileWriter(path, true)) {
+                writer.write("[" + timeNow() + "]: " + message + "\n");
+            } catch (IOException e) {
+                System.out.println(message);
+                e.printStackTrace();
+                throw new IOException("Failed to write to log!");
+            }
     }
 
     public void logConnectedTo(int peerID1, int peerID2) throws IOException {
@@ -70,4 +72,37 @@ public class Log {
     public void logCompletionOfDownload(int peerID) throws IOException {
         makeLog("Peer " + peerID + " has downloaded the complete file.");
     }
+
+    //DELETE ME
+    public void logRequest(int peerId, int neighborId, int pieceId) throws IOException {
+        makeLog("Peer " + peerId + " has received request for piece " + pieceId + " from peer " + neighborId);
+    }
+
+    public void logSendRequest(int peerId, int neighborId, int pieceId) throws IOException {
+        makeLog("Peer " + peerId + " has sent a request for " + pieceId + " to peer " + neighborId);
+    }
+
+    public void logReceivedEmptyPiece(int peerID1, int peerID2, int pieceIndex, int numberOfPieces) throws IOException {
+        makeLog("Peer " + peerID1 + " has received empty piece " + pieceIndex + " from " + peerID2 + ". Now the number of pieces it has is " + numberOfPieces + ".");
+    }
+
+    public void logUnchoked2(int peerID1, int peerID2, boolean interested, boolean waiting, boolean choked) throws IOException {
+        makeLog("Peer " + peerID1 + " is unchoked by " + peerID2 + ". Interested = " +interested + ". Waiting = " + waiting + ". Choked = " + choked);
+    }
+    public void logSentPiece(int peerID1, int peerID2, int pieceNumber) throws IOException {
+        makeLog("Peer " + peerID1 + " has sent " + pieceNumber + " to " + peerID2);
+    }
+    public void logSentEmptyPiece(int peerID1, int peerID2, int pieceNumber) throws IOException {
+        makeLog("Peer " + peerID1 + " has sent an empty piece with at index " + pieceNumber + " to " + peerID2);
+    }
+    public void logNotWaiting(int peerID, int neighborID, int piece, boolean waiting) throws IOException {
+        makeLog("Peer " + peerID + " is no longer waiting for piece " + piece + " from " + neighborID + ". Neighbor.waitingForPiece is now " + waiting);
+    }
+    public void logWaiting(int peerID, int neighborID, int piece, boolean waiting) throws IOException {
+        makeLog("Peer " + peerID + " is now waiting for piece " + piece + " from "  + neighborID + ". Neighbor.waitingForPiece is now " + waiting);
+    }
+    public void atPiece(int peerID, int neighborID, int piece) throws IOException {
+        makeLog("Peer " + peerID + " is in receive piece for " + piece + " from "  + neighborID + ".");
+    }
+
 }

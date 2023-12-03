@@ -59,15 +59,22 @@ public class P2PFile {
     }
 
     //writes a piece to the file
-    public synchronized void writePiece(int pieceIndex, byte[] pieceData) throws IOException {
-        int offset = pieceIndex * (int)pieceSize;
-        try (RandomAccessFile file = new RandomAccessFile(filePath, "rw")) {
-            file.seek(offset);
-            file.write(pieceData);
-            pieces.put(pieceIndex, pieceData);
-            pieceAvailability.set(pieceIndex);
-        } catch (IOException e) {
-            throw new IOException("Error writing p2pfile data.");
+    public synchronized void writePiece(int pieceIndex, byte[] pieceData, int id) throws IOException {
+        synchronized (this) {
+            int offset = pieceIndex * (int)pieceSize;
+            try (RandomAccessFile file = new RandomAccessFile(filePath, "rw")) {
+                file.seek(offset);
+                file.write(pieceData);
+                pieces.put(pieceIndex, pieceData);
+                pieceAvailability.set(pieceIndex);
+            } catch (IOException e) {
+                System.out.println(pieceIndex);
+                System.out.println(pieceData);
+                System.out.println(pieceData.length);
+                System.out.println("Received from " + id);
+                e.printStackTrace();
+                throw new IOException("Error writing p2pfile data.");
+            }
         }
     }
 
