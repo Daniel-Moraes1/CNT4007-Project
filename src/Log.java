@@ -27,7 +27,7 @@ public class Log {
         }
     }
 
-    public void logTCPConnection(int peerID1, int peerID2) throws IOException {
+    public void logConnectedTo(int peerID1, int peerID2) throws IOException {
         makeLog("Peer " + peerID1 + " makes a connection to Peer " + peerID2 + ".");
     }
 

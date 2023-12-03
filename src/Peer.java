@@ -116,18 +116,13 @@ public class Peer {
     }
 
     private Socket connectToServer(NeighborInfo neighborInfo) throws Exception {
-        System.out.println("Attempting to connect to neighbor " + neighborInfo.id);
         Socket tempSocket = new Socket(neighborInfo.name, neighborInfo.port);
         ObjectOutputStream out = new ObjectOutputStream(tempSocket.getOutputStream());
         out.flush();
         ObjectInputStream in = new ObjectInputStream(tempSocket.getInputStream());
-        System.out.println("Listening for port number from server...");
         int portNumber = (int)in.readObject();
-        System.out.println("Received port number " + portNumber);
         tempSocket.close();
-        System.out.println("Closed temp socket, looking to connect to new port...");
         Socket newSocket = new Socket(neighborInfo.name, portNumber);
-        System.out.println("Successfully connected to neighbor " + neighborInfo.id + " on port " + portNumber);
         handShakeClient(newSocket);
         Neighbor n = new Neighbor(neighborInfo.id, newSocket);
         chokeLock.lock();
@@ -139,16 +134,15 @@ public class Peer {
         }
         createNeighborThreads(n);
         sendBitfield(n);
+        logObj.logConnectedTo(this.id, n.id);
         return newSocket;
     }
 
     public void connectToClient (ServerSocket s) throws Exception {
-        System.out.println("In make new connection thread");
         s.setSoTimeout(10000);
         Socket connection;
         try {
             connection = s.accept();
-            System.out.println("Successfully accepted connection on new port");
         }
         catch(SocketTimeoutException e) {
             throw new SocketTimeoutException("Client socket failed to connect to new socket");
@@ -157,7 +151,6 @@ public class Peer {
         }
 
 
-        System.out.println("Starting call to handshake");
         int id = handShakeServer(connection);
         Neighbor n = new Neighbor(id, connection);
         logObj.logConnectedFrom(this.id, n.id);
@@ -168,18 +161,15 @@ public class Peer {
         } finally {
             chokeLock.unlock();
         }
-        System.out.println("Starting call to create neighbor threads");
+        this.logObj.logConnectedFrom(this.id, n.id);
         createNeighborThreads(n);
-        System.out.println("Out of createNeighborThreads");
         sendBitfield(n);
     }
 
     private void listenForNewNeighbor() throws Exception {
         try {
             while(listening) {
-                System.out.println("Listening for new neighbors...");
                 Socket connection = welcomeSocket.accept(); // welcome socket connection
-                System.out.println("New neighbor connected");
 
                 ServerSocket s = new ServerSocket(0);
 
@@ -197,7 +187,6 @@ public class Peer {
                 ObjectOutputStream out = new ObjectOutputStream(connection.getOutputStream());
                 out.flush();
                 ObjectInputStream in = new ObjectInputStream(connection.getInputStream());
-                System.out.println("Sending port number " + port);
                 out.writeObject(port); // write port number through welcome socket connection
                 out.flush();
                 connectionThread.join();
@@ -223,7 +212,6 @@ public class Peer {
         ObjectOutputStream out = new ObjectOutputStream(s.getOutputStream());
         out.flush();
         ObjectInputStream in = new ObjectInputStream(s.getInputStream());
-        System.out.println("Waiting for client to send handshake...");
         String response = (String)in.readObject();
         int neighborId = Integer.parseInt(response.substring(28));
         if (neighborId == -1) {
@@ -232,10 +220,6 @@ public class Peer {
         if (!response.substring(0,28).equals("P2PFILESHARINGPROJ" + "          ")) {
             throw new Exception("Received wrong connection message from client: " + response);
         }
-        System.out.println("Response from peer: " + response);
-        System.out.println(neighborId);
-
-        System.out.println("Writing: " + "P2PFILESHARINGPROJ" + "          " + Integer.toString(this.id));
         out.writeObject("P2PFILESHARINGPROJ" + "          " + Integer.toString(this.id));
         return neighborId;
     }
@@ -244,23 +228,19 @@ public class Peer {
         ObjectOutputStream out = new ObjectOutputStream(s.getOutputStream());
         out.flush();
         ObjectInputStream in = new ObjectInputStream(s.getInputStream());
-        System.out.println("Writing: " + "P2PFILESHARINGPROJ" + "          " + Integer.toString(this.id));
         out.writeObject("P2PFILESHARINGPROJ" + "          " + Integer.toString(this.id));
         String response = (String)in.readObject();
         if (!response.substring(0,28).equals("P2PFILESHARINGPROJ" + "          ")) {
             // Incorrect response from neighbor, need to handle
             throw new Exception("Received wrong connection message from client: " + response);
         }
-        System.out.println("Response from peer: " + response);
     }
 
     public void createNeighborThreads(Neighbor n) throws Exception {
-        System.out.println("In createNeighborThreads");
         n.requestThread = new Thread(() -> {
             try {
                 this.responder(n);
             } catch (Exception e) {
-                System.out.println("Thread interrupted");
                 e.printStackTrace();
                 //DELETE ME
                 try {
@@ -270,13 +250,11 @@ public class Peer {
                 }
             }
         });
-        System.out.println("Starting request thread");
         n.requestThread.start();
         n.initiatorThread = new Thread(() -> {
             try {
                 this.initiator(n);
             } catch (Exception e) {
-                System.out.println("Thread interrupted");
                 e.printStackTrace();
                 // DELETE ME
                 try {
@@ -286,7 +264,6 @@ public class Peer {
                 }
             }
         });
-        System.out.println("Starting initiator thread");
         n.initiatorThread.start();
     }
 
@@ -307,7 +284,6 @@ public class Peer {
         welcomeThread.start();
     }
     public void createTimerThread() throws InterruptedException {
-        System.out.println("In createTimerThread");
         this.timerThread = new Thread(() -> {
             try {
                 this.timer();
@@ -339,26 +315,26 @@ public class Peer {
                 // Stop receiving messages from neighbor
                 case 0:
                     neighbor.chokingPeer = true;
-                    //System.out.println("Choked by " + neighbor.id);
+                    logObj.logChoked(this.id, neighbor.id);
                     break;
 
                 // Unchoke
                 // Begin receiving messages from neighbor
                 case 1:
                     neighbor.chokingPeer = false;
-                    //System.out.println("Unchoked by " + neighbor.id);
+                    logObj.logUnchoked(this.id, neighbor.id);
                     break;
 
                 //Interested
                 case 2:
                     neighbor.interestedInPeer = true;
-                    System.out.println(neighbor.id + " is interested in us");
+                    logObj.logReceivedInterested(this.id, neighbor.id);
                     break;
 
                 // Not Interested
                 case 3:
                     neighbor.interestedInPeer = false;
-                    System.out.println(neighbor.id + " is not interested in us");
+                    logObj.logReceivedNotInterested(this.id, neighbor.id);
                     break;
 
                 // Have
@@ -366,15 +342,15 @@ public class Peer {
                     byte[] byteIndex = in.readNBytes(4);
                     count++;
                     int index = Util.fourBytesToInt(byteIndex);
-                    System.out.println("Received HAVE " + index + " from " + neighbor.id);
-                    System.out.println("Count = " + count + ". NumPieces = " + neighbor.numPieces);
+                    logObj.logReceivedHave(this.id, neighbor.id, index);
+
                     if (!neighbor.bitfield.get(index)) {
                         neighbor.bitfield.set(index, true);
                         neighbor.numPieces++;
                         if (neighbor.numPieces == totalPieces) {
                             neighbor.finished = true;
                             countFinishedNeighbors++;
-                            System.out.println("Neighbor " + neighbor.id + " is finished. Total completed neighbors = " + countFinishedNeighbors);
+                            logObj.logCompletionOfDownload(neighbor.id);
                             if (checkDone()) return;
                         }
                     }
@@ -386,7 +362,6 @@ public class Peer {
                             neighbor.piecesForPeerLock.unlock();
                         }
                         sendMessage(MessageType.INTERESTED, neighbor, null);
-                        System.out.println("Sending interested message to " + neighbor.id);
                     }
                     break;
 
@@ -411,7 +386,7 @@ public class Peer {
                     if (neighbor.numPieces == totalPieces) {
                         neighbor.finished = true;
                         countFinishedNeighbors++;
-                        System.out.println("Neighbor " + neighbor.id + " is finished. Total completed neighbors = " + countFinishedNeighbors);
+                        logObj.logCompletionOfDownload(neighbor.id); // Log completion of download from bitfield?
                         if (checkDone()) return;
                     }
                     checkInterestInNeighbor(neighbor);
@@ -419,12 +394,10 @@ public class Peer {
                     if (neighbor.interestedInNeighbor) {
                         logObj.logReceivedInterested(this.id,neighbor.id);
                         sendMessage(MessageType.INTERESTED, neighbor, null); // Send interested in neighbor
-                        System.out.println("Sent INTERESTED message to " + neighbor.id);
                     }
                     else {
                         logObj.logReceivedNotInterested(this.id,neighbor.id);
                         sendMessage(MessageType.NOT_INTERESTED, neighbor, null); // Send not interested in neighbor
-                        System.out.println("Sent NOT_INTERESTED message to " + neighbor.id);
                     }
                     break;
 
@@ -432,7 +405,6 @@ public class Peer {
                 case 6:
                     byte[] requestIndexBytes = in.readNBytes(4);
                     int requestedIndex = Util.fourBytesToInt(requestIndexBytes);
-                    System.out.println("Received request for piece " + requestedIndex);
                     Boolean unchoked = false;
                     chokeLock.lock();
                     try {
@@ -442,14 +414,12 @@ public class Peer {
                     }
                     if (unchoked) {
                         sendMessage(MessageType.PIECE, neighbor, p2pFile.getPiece(requestedIndex));
-                        System.out.println("Sending piece " + requestedIndex + " to " + neighbor.id);
                         neighbor.piecesInInterval++;
                     }
                     else {
                         // We can send an empty piece for the request index if the neighbor has been choked
                         // This will let then know to request the piece from another neighbor
                         sendMessage(MessageType.PIECE, neighbor, requestIndexBytes);
-                        System.out.println("Sending empty piece " + requestedIndex + " to " + neighbor.id);
                     }
                     break;
 
@@ -459,7 +429,6 @@ public class Peer {
                     // The first four bytes of a piece payload is the index
                     byte[] pieceIndexBytes = in.readNBytes(4);
                     int pieceIndex = Util.fourBytesToInt(pieceIndexBytes);
-                    System.out.println("Received piece " + pieceIndex);
                     if (messageLength == 5) {
                         // Piece was not sent over (neighbor does not have or we have been choked)
                         requested.set(pieceIndex, false);
@@ -474,10 +443,11 @@ public class Peer {
                             numPieces++;
                             if (numPieces == totalPieces) {
                                 this.finished = true;
-                                System.out.println("Finished. Total completed neighbors = " + countFinishedNeighbors);
+                                logObj.logCompletionOfDownload(this.id);
                                 if (checkDone()) return;
                             }
                         }
+                        logObj.logDownloadedPiece(this.id, neighbor.id, pieceIndex, this.numPieces);
 
                         // When we get a piece, inform all neighbors that we have that piece. Re-evaluate interest
                         List<Neighbor> neighborsCopy;
@@ -487,7 +457,6 @@ public class Peer {
                         for (Neighbor n : neighborsCopy) {
                             logObj.logReceivedHave(this.id,n.id,pieceIndex);
                             sendMessage(MessageType.HAVE, n, pieceIndexBytes);
-                            System.out.println("Sending HAVE message to " + n.id + " for piece " + pieceIndex);
 
                             // Upon receiving a new packet, remove packet index for set of packets that neighbors have and peer does not
                             // If set of missing packets that a neighbor has becomes 0, send NOT_INTERESTED
@@ -498,7 +467,6 @@ public class Peer {
                                     if (!checkInterestInNeighbor(n)) {
                                         logObj.logReceivedNotInterested(this.id,n.id);
                                         sendMessage(MessageType.NOT_INTERESTED, n, null);
-                                        System.out.println("Sending not interested message to " + n.id);
                                     }
                                 }
                             } finally {
@@ -518,7 +486,6 @@ public class Peer {
 
     // Thread for starting message sends to neighbors (piece requests)
     public void initiator(Neighbor neighbor) throws Exception {
-        System.out.println("In initiator thread");
         OutputStream out = neighbor.connection.getOutputStream();
         while(listening) {
             if (!neighbor.chokingPeer) {
@@ -550,7 +517,6 @@ public class Peer {
                         }
                         byte[] pieceNumberBytes = Util.intToFourBytes(pieceNumber);
                         sendMessage(MessageType.REQUEST, neighbor, pieceNumberBytes);
-                        System.out.println("Sent piece request for piece " + pieceNumber);
                         neighbor.waitingForPiece = true;
                     }
                 }
@@ -598,7 +564,6 @@ public class Peer {
                 }
             }
             if (interestedNeighbors.size() == 0) {
-                //System.out.println("No interested neighbors");
                 return;
             }
 
@@ -644,7 +609,6 @@ public class Peer {
             }
 
             // If an unchoked neighbor is not reselected to be unchoked
-
             for (Neighbor n : unchokedNeighbors) {
                 if (!toUnchoke.contains(n) && this.optimisticUnchokedNeighbor != n) {
                     toChoke.add(n);
@@ -657,22 +621,26 @@ public class Peer {
                     chokedNeighbors.add(n);
                     logObj.logChoked(this.id,n.id);
                     sendMessage(MessageType.CHOKE, n, null);
-                    //System.out.println("Choking neighbor " + n.id);
                 }
             }
 
+            String separator = "";
+            StringBuilder prefNeighbors = new StringBuilder();
             for (Neighbor n : toUnchoke) {
+                prefNeighbors.append(separator);
+                prefNeighbors.append(n.id);
+                separator = ", ";
                 if (chokedNeighbors.contains(n)) {
                     chokedNeighbors.remove(n);
                     unchokedNeighbors.add(n);
                     logObj.logUnchoked(this.id,n.id);
                     sendMessage(MessageType.UNCHOKE, n, null);
-                    //System.out.println("Unchoked neighbor " + n.id);
                 }
                 if (n == this.optimisticUnchokedNeighbor) {
                     this.optimisticUnchokedNeighbor = null;
                 }
             }
+            logObj.logPreferredNeighbors(this.id, prefNeighbors.toString());
             // Reset pieces downloaded in interval for all neighbors
             for (Neighbor n : neighbors) {
                 n.piecesInInterval = 0;
@@ -701,21 +669,20 @@ public class Peer {
                     unchokedNeighbors.remove(optimisticUnchokedNeighbor);
                     chokedNeighbors.add(optimisticUnchokedNeighbor);
                     sendMessage(MessageType.CHOKE, optimisticUnchokedNeighbor, null);
-                    //System.out.println("Choking optimistically unchoked neighbor " + optimisticUnchokedNeighbor.id);
-                    logObj.logOptimisticallyUnchokedNeighbor(this.id,optimisticUnchokedNeighbor.id);
+
                 }
                 optimisticUnchokedNeighbor = n;
                 unchokedNeighbors.add(n);
                 chokedNeighbors.remove(n);
                 sendMessage(MessageType.UNCHOKE, n, null);
-                //System.out.println("Optimistically unchoking neighbor " + interested.get(random).id);
+                logObj.logOptimisticallyUnchokedNeighbor(this.id,optimisticUnchokedNeighbor.id);
             }
             else {
                 if (optimisticUnchokedNeighbor != null) {
                     unchokedNeighbors.remove(optimisticUnchokedNeighbor);
                     chokedNeighbors.add(optimisticUnchokedNeighbor);
                     sendMessage(MessageType.CHOKE, optimisticUnchokedNeighbor, null);
-                    //System.out.println("Choking optmistically unchoked neighbor " + optimisticUnchokedNeighbor + " (not interested in us or unchoked)");
+
                 }
             }
         } finally {
