@@ -19,7 +19,7 @@ public class Log {
         return dateFormat.format(date);
     }
 
-    private void makeLog(String message) throws IOException {
+    private synchronized void makeLog(String message) throws IOException {
         try (FileWriter writer = new FileWriter(path, true)) {
             writer.write("[" + timeNow() + "]: " + message + "\n");
         } catch (IOException e) {
