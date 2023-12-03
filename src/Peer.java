@@ -256,6 +256,8 @@ public class Peer {
                 return;
             } catch (InterruptedException e) {
                 return;
+            } catch(SocketException e) {
+                return;
             }
             catch (Exception e) {
                 e.printStackTrace();
@@ -267,6 +269,8 @@ public class Peer {
                 this.initiator(n);
                 return;
             } catch (InterruptedException e) {
+                return;
+            } catch(SocketException e) {
                 return;
             } catch (Exception e) {
                 e.printStackTrace();
@@ -282,6 +286,8 @@ public class Peer {
                 welcomeSocket.close();
                 return;
             } catch (InterruptedException e) {
+                return;
+            } catch(SocketException e) {
                 return;
             } catch(Exception e) {
                 e.printStackTrace();
@@ -308,7 +314,6 @@ public class Peer {
         while(neighbor.listening) {
             byte[] lengthBytes = in.readNBytes(4); // Wait for message to come in
             if (!listening) {
-                System.out.println("Not listening");
                 return;
             }
             int messageLength = Util.fourBytesToInt(lengthBytes);
@@ -326,7 +331,7 @@ public class Peer {
                 // Begin receiving messages from neighbor
                 case 1:
                     neighbor.chokingPeer = false;
-                    logObj.logUnchoked2(this.id, neighbor.id, neighbor.interestedInNeighbor, neighbor.waitingForPiece, neighbor.chokingPeer);
+                    logObj.logUnchoked(this.id, neighbor.id);
                     break;
 
                 //Interested
@@ -343,7 +348,6 @@ public class Peer {
 
                 // Have
                 case 4:
-                    logObj.logInHave(this.id, neighbor.id);
                     byte[] byteIndex = in.readNBytes(4);
                     int index = Util.fourBytesToInt(byteIndex);
                     logObj.logReceivedHave(this.id, neighbor.id, index);
@@ -367,12 +371,10 @@ public class Peer {
                         }
                     }
                     checkInterestInNeighbor(neighbor);
-                    logObj.logLeaveHave(this.id, neighbor.id);
                     break;
 
                 // Bitfield
                 case 5:
-                    logObj.logInBit(this.id, neighbor.id);
                     byte[] bitfieldBytes = in.readNBytes(messageLength-1);
                     neighbor.bitfield = bytesToBitSet(bitfieldBytes);
                     neighbor.piecesForPeerLock.lock();
@@ -396,15 +398,12 @@ public class Peer {
                     }
                     checkInterestInNeighbor(neighbor);
                     if (checkDone()) return;
-                    logObj.logLeaveBit(this.id, neighbor.id);
                     break;
 
                 // Request
                 case 6:
-                    logObj.logInRequest(this.id, neighbor.id);
                     byte[] requestIndexBytes = in.readNBytes(4);
                     int requestedIndex = Util.fourBytesToInt(requestIndexBytes);
-                    logObj.logRequest(this.id, neighbor.id, requestedIndex);
                     Boolean unchoked = false;
                     chokeLock.lock();
                     try {
@@ -414,58 +413,45 @@ public class Peer {
                     }
                     if (unchoked) {
                         sendMessage(MessageType.PIECE, neighbor, p2pFile.getPiece(requestedIndex));
-                        logObj.logSentPiece(this.id, neighbor.id, requestedIndex);
                         neighbor.piecesInInterval++;
                     }
                     else {
                         // We can send an empty piece for the request index if the neighbor has been choked
                         // This will let then know to request the piece from another neighbor
                         sendMessage(MessageType.PIECE, neighbor, requestIndexBytes);
-                        logObj.logSentEmptyPiece(this.id, neighbor.id, requestedIndex);
                     }
-                    logObj.logLeaveRequest(this.id, neighbor.id);
                     break;
 
                 // Piece
                 case 7:
-                    logObj.logInPiece(this.id, neighbor.id);
 
                     // The first four bytes of a piece payload is the index
                     byte[] pieceIndexBytes = in.readNBytes(4);
                     int pieceIndex = Util.fourBytesToInt(pieceIndexBytes);
-                    logObj.atPiece(this.id, neighbor.id, pieceIndex);
                     if (messageLength == 5) {
                         // Piece was not sent over (neighbor does not have or we have been choked)
                         requested.set(pieceIndex, false);
                         neighbor.waitingForPiece = false;
-                        logObj.logNotWaiting(this.id, neighbor.id, pieceIndex, neighbor.waitingForPiece);
-                        logObj.logReceivedEmptyPiece(this.id, neighbor.id, pieceIndex, numPieces);
                     }
                     else {
                         byte[] pieceData = in.readNBytes(messageLength-5);
                         p2pFile.writePiece(pieceIndex, pieceData, neighbor.id);
                         requested.set(pieceIndex, false);
                         neighbor.waitingForPiece = false;
-                        logObj.logNotWaiting(this.id, neighbor.id, pieceIndex, neighbor.waitingForPiece);
                         if (!this.bitfield.get(pieceIndex)) {
                             this.bitfield.set(pieceIndex, true);
                             numPieces++;
+                            boolean done = numPieces == totalPieces ? true : false;
                             logObj.logDownloadedPiece(this.id, neighbor.id, pieceIndex, this.numPieces);
-                            if (numPieces == totalPieces) {
+                            if (done) {
                                 this.finished = true;
                                 logObj.logCompletionOfDownload(this.id);
-                                System.out.println("Finished download");
                             }
                         }
 
-                        // When we get a piece, inform all neighbors that we have that piece. Re-evaluate interest
-                        List<Neighbor> neighborsCopy;
-                        synchronized (this.neighbors) {
-                            neighborsCopy = new ArrayList<>(this.neighbors);
-                        }
-
-
-                        for (Neighbor n : neighborsCopy) {
+                        int len = neighbors.size();
+                        for (int i=0; i<len; i++) {
+                            Neighbor n = neighbors.get(i);
                             sendMessage(MessageType.HAVE, n, pieceIndexBytes);
 
                             // Upon receiving a new packet, remove packet index for set of packets that neighbors have and peer does not
@@ -481,9 +467,7 @@ public class Peer {
                             }
                         }
                     }
-
                     if (checkDone()) return;
-                    logObj.logLeavePiece(this.id, neighbor.id);
                     break;
                 // Shutdown Req
                 case 8:
@@ -512,11 +496,11 @@ public class Peer {
                     if (!neighbor.waitingForPiece) {
                         //If we are not choked by the neighbor, neighbor has pieces we do not,
                         // and we do not have an outstanding piece request to neighbor, find a piece to request
-                        neighbor.piecesForPeerLock.lock();
                         if (neighbor.piecesForPeer.size() == 0) {
                             continue;
                         }
                         int pieceNumber = -1;
+                        neighbor.piecesForPeerLock.lock();
                         try {
                             int random = new Random().nextInt(neighbor.piecesForPeer.size());
                             int count = 0;
@@ -537,8 +521,6 @@ public class Peer {
                         byte[] pieceNumberBytes = Util.intToFourBytes(pieceNumber);
                         neighbor.waitingForPiece = true;
                         sendMessage(MessageType.REQUEST, neighbor, pieceNumberBytes);
-                        logObj.logSendRequest(this.id, neighbor.id, pieceNumber);
-                        logObj.logWaiting(this.id, neighbor.id, pieceNumber, neighbor.waitingForPiece);
                     }
                 }
             }
@@ -653,7 +635,6 @@ public class Peer {
                     unchokedNeighbors.remove(n);
                     chokedNeighbors.add(n);
                     sendMessage(MessageType.CHOKE, n, null);
-                    System.out.println("Choking neighbor " + n.id);
                 }
             }
 
@@ -669,7 +650,6 @@ public class Peer {
                     chokedNeighbors.remove(n);
                     unchokedNeighbors.add(n);
                     sendMessage(MessageType.UNCHOKE, n, null);
-                    System.out.println("Unchoking neighbor " + n.id);
                 }
                 if (n == this.optimisticUnchokedNeighbor) {
                     this.optimisticUnchokedNeighbor = null;
@@ -718,7 +698,6 @@ public class Peer {
                 unchokedNeighbors.add(n);
                 chokedNeighbors.remove(n);
                 sendMessage(MessageType.UNCHOKE, n, null);
-                System.out.println("Unchoking neighbor " + n.id);
             }
             else {
                 // If previous optimistic unchoked neighbor is not interested and there are no other intersted neighbors, choke optimistic unchoked neighbor anyway
@@ -726,7 +705,6 @@ public class Peer {
                     unchokedNeighbors.remove(optimisticUnchokedNeighbor);
                     chokedNeighbors.add(optimisticUnchokedNeighbor);
                     sendMessage(MessageType.CHOKE, optimisticUnchokedNeighbor, null);
-                    System.out.println("Choking neighbor " + optimisticUnchokedNeighbor.id);
 
                 }
             }
@@ -794,11 +772,9 @@ public class Peer {
         if (neighbor.interestedInNeighbor == neighbor.piecesForPeer.isEmpty()) {
             if (neighbor.piecesForPeer.isEmpty()) {
                 sendMessage(MessageType.NOT_INTERESTED, neighbor, null);
-                System.out.println("Sending not interested to peer " + neighbor.id);
             }
             else {
                 sendMessage(MessageType.INTERESTED, neighbor, null);
-                System.out.println("Sending interested to peer " + neighbor.id);
             }
         }
         neighbor.interestedInNeighbor = !neighbor.piecesForPeer.isEmpty();
@@ -816,7 +792,6 @@ public class Peer {
     }
 
     private void shutDown() throws IOException {
-        System.out.println("Shutting down");
         listening = false;
         this.welcomeSocket.close();
         this.timerThread.interrupt();
