@@ -104,5 +104,29 @@ public class Log {
     public void atPiece(int peerID, int neighborID, int piece) throws IOException {
         makeLog("Peer " + peerID + " is in receive piece for " + piece + " from "  + neighborID + ".");
     }
+    public void logInPiece(int peerID, int neighborID) throws IOException {
+        makeLog("Entered piece case for neighbor " + neighborID);
+    }
+    public void logLeavePiece(int peerID, int neighborID) throws IOException {
+        makeLog("Leaving piece case for neighbor " + neighborID);
+    }
+    public void logInBit(int peerID, int neighborID) throws IOException {
+        makeLog("Entered bitfield case for neighbor " + neighborID);
+    }
+    public void logLeaveBit(int peerID, int neighborID) throws IOException {
+        makeLog("Leaving bitfield case for neighbor " + neighborID);
+    }
+    public void logInRequest(int peerID, int neighborID) throws IOException {
+        makeLog("Entered request case for neighbor " + neighborID);
+    }
+    public void logLeaveRequest(int peerID, int neighborID) throws IOException {
+        makeLog("Leaving request case for neighbor " + neighborID);
+    }
+    public void logInHave(int peerID, int neighborID) throws IOException {
+        makeLog("Entered have case for neighbor " + neighborID);
+    }
+    public void logLeaveHave(int peerID, int neighborID) throws IOException {
+        makeLog("Leaving have case for neighbor " + neighborID);
+    }
 
 }

@@ -343,6 +343,7 @@ public class Peer {
 
                 // Have
                 case 4:
+                    logObj.logInHave(this.id, neighbor.id);
                     byte[] byteIndex = in.readNBytes(4);
                     int index = Util.fourBytesToInt(byteIndex);
                     logObj.logReceivedHave(this.id, neighbor.id, index);
@@ -366,10 +367,12 @@ public class Peer {
                         }
                     }
                     checkInterestInNeighbor(neighbor);
+                    logObj.logLeaveHave(this.id, neighbor.id);
                     break;
 
                 // Bitfield
                 case 5:
+                    logObj.logInBit(this.id, neighbor.id);
                     byte[] bitfieldBytes = in.readNBytes(messageLength-1);
                     neighbor.bitfield = bytesToBitSet(bitfieldBytes);
                     neighbor.piecesForPeerLock.lock();
@@ -393,10 +396,12 @@ public class Peer {
                     }
                     checkInterestInNeighbor(neighbor);
                     if (checkDone()) return;
+                    logObj.logLeaveBit(this.id, neighbor.id);
                     break;
 
                 // Request
                 case 6:
+                    logObj.logInRequest(this.id, neighbor.id);
                     byte[] requestIndexBytes = in.readNBytes(4);
                     int requestedIndex = Util.fourBytesToInt(requestIndexBytes);
                     logObj.logRequest(this.id, neighbor.id, requestedIndex);
@@ -418,10 +423,12 @@ public class Peer {
                         sendMessage(MessageType.PIECE, neighbor, requestIndexBytes);
                         logObj.logSentEmptyPiece(this.id, neighbor.id, requestedIndex);
                     }
+                    logObj.logLeaveRequest(this.id, neighbor.id);
                     break;
 
                 // Piece
                 case 7:
+                    logObj.logInPiece(this.id, neighbor.id);
 
                     // The first four bytes of a piece payload is the index
                     byte[] pieceIndexBytes = in.readNBytes(4);
@@ -433,7 +440,6 @@ public class Peer {
                         neighbor.waitingForPiece = false;
                         logObj.logNotWaiting(this.id, neighbor.id, pieceIndex, neighbor.waitingForPiece);
                         logObj.logReceivedEmptyPiece(this.id, neighbor.id, pieceIndex, numPieces);
-                        break;
                     }
                     else {
                         byte[] pieceData = in.readNBytes(messageLength-5);
@@ -477,6 +483,7 @@ public class Peer {
                     }
 
                     if (checkDone()) return;
+                    logObj.logLeavePiece(this.id, neighbor.id);
                     break;
                 // Shutdown Req
                 case 8:
