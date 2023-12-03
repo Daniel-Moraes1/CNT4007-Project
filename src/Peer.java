@@ -3,6 +3,7 @@ package src;
 import java.io.*;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.util.*;
 import java.util.concurrent.locks.Lock;
@@ -53,10 +54,11 @@ public class Peer {
         public volatile HashSet<Integer> piecesForPeer; // Track pieces neighbor has that peer does not have
         public volatile boolean waitingForPiece;
         public volatile int piecesInInterval;
-        public volatile Thread requestThread;
+        public volatile Thread responderThread;
         public volatile Thread initiatorThread;
         public Lock writeLock;
         public Lock piecesForPeerLock;
+        public boolean listening;
 
         public Neighbor(int id, Socket connection_) throws IOException, ClassNotFoundException {
             this.id = id;
@@ -74,13 +76,14 @@ public class Peer {
             this.numPieces = 0;
             this.writeLock = new ReentrantLock();
             this.piecesForPeerLock = new ReentrantLock();
+            this.listening = true;
         }
     }
 
     public Peer(int id_, int numNeighbors, int maxConnections_, int unchokingInterval_,
                 int optimisticUnchokingInterval_, String fileName_,
                 long fileSize_, long pieceSize_, int welcomePort_, boolean hasFile_, Vector<NeighborInfo> neighborInfo)
-                throws InterruptedException,  Exception {
+                throws  Exception {
         this.id = id_;
         this.numNeighbors = numNeighbors;
         this.logObj = new Log(this.id);
@@ -115,7 +118,7 @@ public class Peer {
         createTimerThread();
     }
 
-    private Socket connectToServer(NeighborInfo neighborInfo) throws InterruptedException, Exception {
+    private Socket connectToServer(NeighborInfo neighborInfo) throws Exception {
         Socket tempSocket = new Socket(neighborInfo.name, neighborInfo.port);
         ObjectOutputStream out = new ObjectOutputStream(tempSocket.getOutputStream());
         out.flush();
@@ -138,7 +141,7 @@ public class Peer {
         return newSocket;
     }
 
-    public void connectToClient (ServerSocket s) throws InterruptedException, Exception {
+    public void connectToClient (ServerSocket s) throws Exception {
         s.setSoTimeout(10000);
         Socket connection;
         try {
@@ -165,10 +168,14 @@ public class Peer {
         sendBitfield(n);
     }
 
-    private void listenForNewNeighbor() throws InterruptedException, Exception {
+    private void listenForNewNeighbor() throws Exception {
         try {
             while(listening) {
                 Socket connection = welcomeSocket.accept(); // welcome socket connection
+
+                if (!listening) {
+                    return;
+                }
 
                 ServerSocket s = new ServerSocket(0);
 
@@ -192,23 +199,26 @@ public class Peer {
 
             }
         }
-        catch (InterruptedException e) {
-            System.out.println("Welcome thread shutting down");
-            return;
+        catch (SocketException e) {
+            if (!this.listening) {
+                return;
+            }
+            else {
+                throw new Exception("Welcome socket failed");
+            }
         }
         catch(Exception e) {
             throw new Exception("Welcome socket failed");
         }
     }
 
-    public void connectToNeighbors(Vector<NeighborInfo> neighborInfo) throws InterruptedException, Exception {
+    public void connectToNeighbors(Vector<NeighborInfo> neighborInfo) throws Exception {
         for (int i=0; i<neighborInfo.size(); i++) {
             connectToServer(neighborInfo.get(i));
         }
     }
 
-
-    public int handShakeServer(Socket s) throws InterruptedException, Exception {
+    public int handShakeServer(Socket s) throws Exception {
         // Project spec does not specify that a handshake ACK should come through
         // Leaving it out for now.
         ObjectOutputStream out = new ObjectOutputStream(s.getOutputStream());
@@ -226,7 +236,7 @@ public class Peer {
         return neighborId;
     }
 
-    public void handShakeClient(Socket s) throws InterruptedException, Exception {
+    public void handShakeClient(Socket s) throws Exception {
         ObjectOutputStream out = new ObjectOutputStream(s.getOutputStream());
         out.flush();
         ObjectInputStream in = new ObjectInputStream(s.getInputStream());
@@ -238,79 +248,64 @@ public class Peer {
         }
     }
 
-    public void createNeighborThreads(Neighbor n) throws InterruptedException, Exception {
-        n.requestThread = new Thread(() -> {
+    public void createNeighborThreads(Neighbor n) throws Exception {
+        n.responderThread = new Thread(() -> {
             try {
                 this.responder(n);
                 n.connection.close();
-                System.out.println("Killing request thread");
                 return;
             } catch (InterruptedException e) {
-                System.out.println("Request thread terminated for shutdown");
                 return;
             }
             catch (Exception e) {
-                System.out.println("Other exception called from requestThread");
                 e.printStackTrace();
             }
         });
-        n.requestThread.start();
+        n.responderThread.start();
         n.initiatorThread = new Thread(() -> {
             try {
                 this.initiator(n);
-                System.out.println("Killing initiator thread");
                 return;
             } catch (InterruptedException e) {
-                System.out.println("Initiator thread interrupted for shutdown");
                 return;
             } catch (Exception e) {
-                System.out.println("Other exception called from initiatorThread");
                 e.printStackTrace();
             }
         });
         n.initiatorThread.start();
     }
 
-    public void createWelcomeThread() throws InterruptedException {
+    public void createWelcomeThread() {
         this.welcomeThread = new Thread(() -> {
             try {
                 this.listenForNewNeighbor();
-                System.out.println("Killing welcome thread");
                 welcomeSocket.close();
                 return;
             } catch (InterruptedException e) {
-                System.out.println("Welcome thread interrupted for shutdown");
                 return;
             } catch(Exception e) {
-                System.out.println("Other exception called from welcomeThread");
                 e.printStackTrace();
             }
         });
         welcomeThread.start();
     }
-    public void createTimerThread() throws InterruptedException {
+    public void createTimerThread() {
         this.timerThread = new Thread(() -> {
             try {
                 this.timer();
-                System.out.println("Killing timer thread");
-                return;
-            } catch (InterruptedException e) {
-                System.out.println("Timer thread interrupted for shutdown");
                 return;
             } catch (Exception e) {
                 e.printStackTrace();
-                System.out.println("Other exception called from TimerThread");
             }
         });
         this.timerThread.start();
     }
 
     // Thread for reading from neighbor connection
-    public void responder(Neighbor neighbor) throws InterruptedException, Exception {
+    public void responder(Neighbor neighbor) throws Exception {
         // For each message, get message type
-        int count = 0; // DELETE ME
         InputStream in = neighbor.connection.getInputStream();
-        while(listening) {
+        while(neighbor.listening) {
             byte[] lengthBytes = in.readNBytes(4); // Wait for message to come in
             if (!listening) {
                 return;
@@ -348,7 +343,6 @@ public class Peer {
                 // Have
                 case 4:
                     byte[] byteIndex = in.readNBytes(4);
-                    count++;
                     int index = Util.fourBytesToInt(byteIndex);
                     logObj.logReceivedHave(this.id, neighbor.id, index);
 
@@ -481,6 +475,17 @@ public class Peer {
                     neighbor.waitingForPiece = false;
                     if (checkDone()) return;
                     break;
+                // Shutdown Req
+                case 8:
+                    neighbor.listening = false;
+                    sendMessage(MessageType.SHUTDOWN_ACK, neighbor, null);
+                    break;
+
+                // Shutdown ACK
+                case 9:
+                    neighbor.listening = false;
+                    break;
+
                 default: {
                         System.out.println("Received invalid message type");
                 }
@@ -489,7 +494,7 @@ public class Peer {
     }
 
     // Thread for starting message sends to neighbors (piece requests)
-    public void initiator(Neighbor neighbor) throws InterruptedException, Exception {
+    public void initiator(Neighbor neighbor) throws Exception {
         OutputStream out = neighbor.connection.getOutputStream();
         while(listening) {
             if (!neighbor.chokingPeer) {
@@ -526,10 +531,13 @@ public class Peer {
                 }
             }
         }
+        if (neighbor.id > this.id) {
+            sendMessage(MessageType.SHUTDOWN, neighbor, null);
+        }
     }
 
     // add Locks / Mutexes here if possible
-    public void timer() throws InterruptedException, IOException {
+    public void timer() throws IOException {
         while(listening) {
             if (System.nanoTime() >= this.lastUnchoke + this.unchokeInterval) {
                 unchoke();
@@ -543,7 +551,7 @@ public class Peer {
         }
     }
 
-    private void sendBitfield(Neighbor n) throws InterruptedException, IOException {
+    private void sendBitfield(Neighbor n) throws IOException {
         if (this.numPieces == 0) {
             return; // Don't send bitfield message if peer has no pieces
         }
@@ -551,11 +559,12 @@ public class Peer {
         sendMessage(MessageType.BITFIELD, n, bytes);
     }
 
-    private void unchoke() throws InterruptedException, IOException {
+    private void unchoke() throws IOException {
         // Find peers with greatest download rates
         // We can just sort for now, but not best TC
         chokeLock.lock();
         try {
+            // Get all interested neighbors
             Vector<Neighbor> interestedNeighbors = new Vector<Neighbor>();
             List<Neighbor> neighborsCopy;
             synchronized (this.neighbors) {
@@ -570,6 +579,7 @@ public class Peer {
                 return;
             }
 
+            // Sort interested neighbors by those who have downloaded the most pieces
             Collections.sort(interestedNeighbors, new SortByDownloadRate());
 
             Vector<Neighbor> toUnchoke = new Vector<Neighbor>();
@@ -579,13 +589,16 @@ public class Peer {
                 if (toUnchoke.size() == maxConnections) {
                     break;
                 }
+                // Last interested neighbor, add them to be unchoked
                 if (i == interestedNeighbors.size()-1) {
                     toUnchoke.add(interestedNeighbors.get(i));
                     break;
                 }
+                // If neighbor has requested more pieces than next most, add them to be unchoked
                 if (interestedNeighbors.get(i).piecesInInterval > interestedNeighbors.get(i+1).piecesInInterval) {
                     toUnchoke.add(interestedNeighbors.get(i));
                 }
+                // If there is a tie, randomly select from tied peers until unchoked is full
                 else if (interestedNeighbors.get(i).piecesInInterval == interestedNeighbors.get(i+1).piecesInInterval) {
                     Vector<Neighbor> tie = new Vector<Neighbor>();
                     while (i < interestedNeighbors.size()-1 && interestedNeighbors.get(i).piecesInInterval == interestedNeighbors.get(i+1).piecesInInterval) {
@@ -593,7 +606,7 @@ public class Peer {
                         i++;
                     }
                     tie.add(interestedNeighbors.get(i));
-
+                    // If there are less tied peers than remaining allowed connections, all tied peers should be added
                     if (tie.size() <= maxConnections - toUnchoke.size()) {
                         for (int j=0; j<tie.size(); j++) {
                             toUnchoke.add(tie.get(j));
@@ -617,7 +630,11 @@ public class Peer {
                     toChoke.add(n);
                 }
             }
+
+            // Log if preferred neighbors changed
             boolean toLog = false;
+
+            // Get neighbors who will be choked
             for (Neighbor n : toChoke) {
                 if (unchokedNeighbors.contains(n)) {
                     toLog = true;
@@ -629,6 +646,7 @@ public class Peer {
 
             String separator = "";
             StringBuilder prefNeighbors = new StringBuilder();
+            // Unchoke neighbors who have been selecting for unchoking. Log as necessary
             for (Neighbor n : toUnchoke) {
                 prefNeighbors.append(separator);
                 prefNeighbors.append(n.id);
@@ -645,6 +663,7 @@ public class Peer {
                 }
             }
             if (toLog) logObj.logPreferredNeighbors(this.id, prefNeighbors.toString());
+
             // Reset pieces downloaded in interval for all neighbors
             for (Neighbor n : neighbors) {
                 n.piecesInInterval = 0;
@@ -653,22 +672,25 @@ public class Peer {
             chokeLock.unlock();
         }
     }
-    private void optimisticUnchoke() throws InterruptedException, IOException {
+    private void optimisticUnchoke() throws IOException {
         Vector<Neighbor> interested = new Vector<Neighbor>();
         chokeLock.lock();
         try {
+            // Get all interested neighbors
             for (Neighbor n : chokedNeighbors) {
                 if (n.interestedInPeer) {
                     interested.add(n);
                 }
             }
 
+            // Randomly selected one interested neighbor to be the optimistic unchoked neighbor
             if (interested.size() != 0) {
                 int random = new Random().nextInt(interested.size());
                 Neighbor n = interested.get(random);
                 if (optimisticUnchokedNeighbor != null && n == optimisticUnchokedNeighbor) {
                     return; // Do not send any messages if same optmistic unchoke neighbor is selected
                 }
+                // Previous optimistically unchoked neighbor should be choked if not reselected
                 else if (optimisticUnchokedNeighbor != null && n != optimisticUnchokedNeighbor) {
                     unchokedNeighbors.remove(optimisticUnchokedNeighbor);
                     chokedNeighbors.add(optimisticUnchokedNeighbor);
@@ -676,12 +698,14 @@ public class Peer {
 
                     logObj.logOptimisticallyUnchokedNeighbor(this.id,optimisticUnchokedNeighbor.id);
                 }
+                // Unchoke selected neighbor
                 optimisticUnchokedNeighbor = n;
                 unchokedNeighbors.add(n);
                 chokedNeighbors.remove(n);
                 sendMessage(MessageType.UNCHOKE, n, null);
             }
             else {
+                // If previous optimistic unchoked neighbor is not interested and there are no other intersted neighbors, choke optimistic unchoked neighbor anyway
                 if (optimisticUnchokedNeighbor != null) {
                     unchokedNeighbors.remove(optimisticUnchokedNeighbor);
                     chokedNeighbors.add(optimisticUnchokedNeighbor);
@@ -696,7 +720,7 @@ public class Peer {
 
     }
 
-    private void sendMessage(MessageType messageType, Neighbor n, byte[] message) throws InterruptedException, IOException {
+    private void sendMessage(MessageType messageType, Neighbor n, byte[] message) throws IOException {
         OutputStream out = n.connection.getOutputStream();
         int messageLength = message != null ? message.length + 1 : 1;
         byte[] messageLengthBytes = Util.intToFourBytes(messageLength);
@@ -726,6 +750,12 @@ public class Peer {
             case PIECE:
                 type = 7;
                 break;
+            case SHUTDOWN:
+                type = 8;
+                break;
+            case SHUTDOWN_ACK:
+                type = 9;
+                break;
         }
         byte[] fullMessage = new byte[4+messageLength];
         System.arraycopy(messageLengthBytes, 0, fullMessage, 0, 4);
@@ -743,39 +773,32 @@ public class Peer {
         }
     }
 
-    private boolean checkInterestInNeighbor(Neighbor neighbor) throws InterruptedException{
+    private boolean checkInterestInNeighbor(Neighbor neighbor) {
         neighbor.interestedInNeighbor = !neighbor.piecesForPeer.isEmpty();
         return neighbor.interestedInNeighbor;
     }
 
     // If all neighbors and self is done, end all connections with Peer
-    private boolean checkDone() throws IOException, InterruptedException {
+    private boolean checkDone() throws IOException {
         if (this.countFinishedNeighbors == numNeighbors && this.finished) {
             listening = false;
-            System.out.println("All neighbors are finished, terminating and ending all threads");
             shutDown();
             return true;
         }
         return false;
     }
 
-    private void shutDown() throws IOException, InterruptedException {
+    private void shutDown() throws IOException {
         listening = false;
-        this.welcomeThread.interrupt();
+        this.welcomeSocket.close();
         this.timerThread.interrupt();
-        for (int i=0; i<neighbors.size(); i++) {
-            //neighbors.get(i).connection.close();
-            neighbors.get(i).initiatorThread.interrupt();
-            neighbors.get(i).requestThread.interrupt();
-        }
-        System.out.println("Shutting down");
     }
 
 
     // Not sure if this works
     class SortByDownloadRate implements Comparator<Neighbor> {
         public int compare(Neighbor a, Neighbor b) {
-            return a.piecesInInterval - b.piecesInInterval;
+            return b.piecesInInterval - a.piecesInInterval;
         }
     }
 
@@ -796,7 +819,7 @@ public class Peer {
         return bitSet;
     }
 
-    public static void main(String[] args) throws InterruptedException, Exception {
+    public static void main(String[] args) throws Exception {
         int id = -1;
         Scanner scanner;
         Vector<NeighborInfo> peerNeighborInfoFromConfig = new Vector<NeighborInfo>();

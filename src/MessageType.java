@@ -8,5 +8,7 @@ public enum MessageType {
     HAVE,
     BITFIELD,
     REQUEST,
-    PIECE
+    PIECE,
+    SHUTDOWN,
+    SHUTDOWN_ACK
 }
