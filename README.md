@@ -24,7 +24,11 @@ Group Number 58
     - Deadlock debugging
     - Thread development
     
-- Alexander: Makefile, Logging, Writing to file, Deadlock debugging
+- Alexander:
+    - Makefile
+    - Logging
+    - Writing to file
+    - Deadlock debugging
 - Ryan:
   - Assisted with the debugging of the deadlocking in the initiator function. 
   - Helped during the design work in the early stages of the project. 
