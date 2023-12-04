@@ -92,7 +92,7 @@ public class Log {
     }
 
     public void receivedHandshake(int id, int neighborId, String message) throws IOException {
-        makeLog("Peer " + id + "has received handshake message " + message + " from peer neighborId");
+        makeLog("Peer " + id + " has received handshake message " + message + " from peer neighborId");
         makeLog("Peer " + id + " is starting communication with " + neighborId);
     }
 

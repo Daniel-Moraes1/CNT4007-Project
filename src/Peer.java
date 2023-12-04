@@ -115,7 +115,7 @@ public class Peer {
         this.p2pFile = new P2PFile("Config/" + id + "/" + fileName_, fileSize, pieceSize,hasFile_);
 
         logObj.logSetupVariables(this.id, welcomePort_, this.numNeighbors, hasFile_, maxConnections_,
-                (int) unchokeInterval / 1000000000, (int) optimisticUnchokeInterval/1000000000, fileName, fileSize, pieceSize);
+                (int) (unchokeInterval / 1000000000), (int) (optimisticUnchokeInterval/1000000000), fileName, fileSize, pieceSize);
         createWelcomeThread();
         connectToNeighbors(neighborInfo);
         createTimerThread();
