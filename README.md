@@ -14,9 +14,22 @@ Group Number 58
 
 ## Contributions By Member
 
-Daniel: 
-Alexander: Makefile, Logging, Writing to file
-Ryan: 
+- Daniel:
+    - Project planning and development
+    - Setting up connections between peers on startup
+    - Handshake
+    - Message sending
+    - Message handling
+    - Shutdown functionality
+    - Deadlock debugging
+    - Thread development
+    
+- Alexander: Makefile, Logging, Writing to file, Deadlock debugging
+- Ryan:
+  - Assisted with the debugging of the deadlocking in the initiator function. 
+  - Helped during the design work in the early stages of the project. 
+  - Made minor changes throughout.
+  - Setup the CISE machine tests
 
 ## Demo link
 https://youtu.be/gOgdwAfxAfA
