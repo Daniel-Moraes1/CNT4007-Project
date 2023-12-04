@@ -113,9 +113,16 @@ public class Peer {
         this.chokeLock = new ReentrantLock();
 
         this.p2pFile = new P2PFile("Config/" + id + "/" + fileName_, fileSize, pieceSize,hasFile_);
+
+        logObj.logSetupVariables(this.id, welcomePort_, this.numNeighbors, hasFile_, maxConnections_,
+                (int) unchokeInterval / 1000000000, (int) optimisticUnchokeInterval/1000000000, fileName, fileSize, pieceSize);
         createWelcomeThread();
         connectToNeighbors(neighborInfo);
         createTimerThread();
+    }
+
+    private void peerLog(String message) {
+        System.out.println("[" + logObj.timeNow() + "]: " + message + "\n");
     }
 
     private Socket connectToServer(NeighborInfo neighborInfo) throws Exception {
@@ -123,6 +130,7 @@ public class Peer {
         ObjectOutputStream out = new ObjectOutputStream(tempSocket.getOutputStream());
         out.flush();
         ObjectInputStream in = new ObjectInputStream(tempSocket.getInputStream());
+        logObj.logConnectedTo(this.id, neighborInfo.id);
         int portNumber = (int)in.readObject();
         tempSocket.close();
         Socket newSocket = new Socket(neighborInfo.name, portNumber);
@@ -137,7 +145,7 @@ public class Peer {
         }
         createNeighborThreads(n);
         sendBitfield(n);
-        logObj.logConnectedTo(this.id, n.id);
+
         return newSocket;
     }
 
@@ -233,6 +241,7 @@ public class Peer {
             throw new Exception("Received wrong connection message from client: " + response);
         }
         out.writeObject("P2PFILESHARINGPROJ" + "          " + Integer.toString(this.id));
+        logObj.receivedHandshake(this.id, neighborId, response);
         return neighborId;
     }
 
@@ -246,6 +255,7 @@ public class Peer {
             // Incorrect response from neighbor, need to handle
             throw new Exception("Received wrong connection message from client: " + response);
         }
+        logObj.receivedHandshake(this.id, Integer.parseInt(response.substring(28)), response);
     }
 
     public void createNeighborThreads(Neighbor n) throws Exception {
@@ -413,6 +423,7 @@ public class Peer {
                     }
                     if (unchoked) {
                         sendMessage(MessageType.PIECE, neighbor, p2pFile.getPiece(requestedIndex));
+                        logObj.logSendPiece(this.id, neighbor.id, requestedIndex);
                         neighbor.piecesInInterval++;
                     }
                     else {
@@ -453,6 +464,7 @@ public class Peer {
                         for (int i=0; i<len; i++) {
                             Neighbor n = neighbors.get(i);
                             sendMessage(MessageType.HAVE, n, pieceIndexBytes);
+                            logObj.logSendHave(this.id, n.id, pieceIndex);
 
                             // Upon receiving a new packet, remove packet index for set of packets that neighbors have and peer does not
                             // If set of missing packets that a neighbor has becomes 0, send NOT_INTERESTED
@@ -521,6 +533,7 @@ public class Peer {
                         byte[] pieceNumberBytes = Util.intToFourBytes(pieceNumber);
                         neighbor.waitingForPiece = true;
                         sendMessage(MessageType.REQUEST, neighbor, pieceNumberBytes);
+                        logObj.logSendRequest(this.id, neighbor.id, pieceNumber);
                     }
                 }
             }
@@ -547,10 +560,12 @@ public class Peer {
 
     private void sendBitfield(Neighbor n) throws IOException {
         if (this.numPieces == 0) {
+            logObj.sendBitfield(this.id, n.id, false);
             return; // Don't send bitfield message if peer has no pieces
         }
         byte[] bytes = bitfield.toByteArray();
         sendMessage(MessageType.BITFIELD, n, bytes);
+        logObj.sendBitfield(this.id, n.id, true);
     }
 
     private void unchoke() throws IOException {
@@ -575,6 +590,15 @@ public class Peer {
 
             // Sort interested neighbors by those who have downloaded the most pieces
             Collections.sort(interestedNeighbors, new SortByDownloadRate());
+
+            String sep = "";
+            StringBuilder output = new StringBuilder();
+            for (Neighbor n : interestedNeighbors) {
+                output.append(sep);
+                output.append(n.id + ":" + n.piecesInInterval);
+                sep = ", ";
+            }
+            logObj.logReceivedPieceCounts(this.id, output.toString());
 
             Vector<Neighbor> toUnchoke = new Vector<Neighbor>();
             Vector<Neighbor> toChoke = new Vector<Neighbor>();
@@ -766,6 +790,12 @@ public class Peer {
         } finally {
             n.writeLock.unlock();
         }
+        if (type == 2) {
+            logObj.logSendInterested(this.id, n.id);
+        }
+        else if (type == 3) {
+            logObj.logSendNotInterested(this.id, n.id);
+        }
     }
 
     private boolean checkInterestInNeighbor(Neighbor neighbor) throws IOException {
@@ -795,6 +825,7 @@ public class Peer {
         listening = false;
         this.welcomeSocket.close();
         this.timerThread.interrupt();
+        logObj.logShutdown();
     }
 
 
